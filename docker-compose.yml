@@ -9,6 +9,8 @@ services:
       - "7687:7687"
     environment:
       - NEO4J_AUTH=neo4j/password
+    volumes:
+      - neo4j_data:/data
 
   api:
     build: ./api
@@ -29,3 +31,6 @@ services:
       - "3000:3000"
     depends_on:
       - api
+
+volumes:
+  neo4j_data:
