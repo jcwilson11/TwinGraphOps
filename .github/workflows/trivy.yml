@@ -32,12 +32,7 @@ jobs:
       - name: Build images with Docker Compose
         run: |
           docker compose up --pull always --build -d
-    
-      - name: Verify Docker images exist
-      - run: |
-          docker image inspect twin_api:latest || (echo "twin_api:latest not found" && docker images && exit 1)
-          docker image inspect twin_frontend:latest || (echo "twin_frontend:latest not found" && docker images && exit 1)
-          
+
       - name: Run Trivy vulnerability scanner on API image
         uses: aquasecurity/trivy-action@7b7aa264d83dc58691451798b4d117d53d21edfe
         with:
