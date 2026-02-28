@@ -165,7 +165,7 @@ app.get('/', (req, res) => {
           <div id="file-count">No files selected.</div>
           <ul id="file-list"></ul>
 
-          <button class="upload-action" type="button" aria-disabled="true">↑ Upload</button>
+          <button class="upload-action" type="button" aria-disabled="true">Upload</button>
           <div id="error"></div>
         </main>
 
