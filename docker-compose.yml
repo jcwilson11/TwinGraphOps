@@ -15,6 +15,7 @@ services:
 
   api:
     build: ./api
+    image: twin_api:latest
     container_name: twin_api
     ports:
       - "8000:8000"
@@ -27,6 +28,7 @@ services:
 
   frontend:
     build: ./frontend
+    image: twin_frontend:latest
     container_name: twin_frontend
     ports:
       - "3000:3000"
