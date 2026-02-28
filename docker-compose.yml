@@ -33,7 +33,9 @@ services:
     depends_on:
       - api
     volumes:
-      - ./frontend/src:/app/src
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm run dev
 
 volumes:
   neo4j_data:
