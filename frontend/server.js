@@ -89,6 +89,60 @@ app.get('/', (req, res) => {
             color: #374151;
           }
 
+          #file-list {
+            list-style: none;
+            margin: 14px 0 0;
+            padding: 0;
+            text-align: left;
+            display: grid;
+            gap: 8px;
+          }
+
+          .file-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 8px 10px;
+            background: #f9fafb;
+          }
+
+          .file-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .remove-file {
+            border: none;
+            background: transparent;
+            color: #6b7280;
+            font-size: 1.1rem;
+            line-height: 1;
+            cursor: pointer;
+            padding: 2px;
+          }
+
+          .remove-file:hover {
+            color: #dc2626;
+          }
+
+          .upload-action {
+            margin-top: 18px;
+            width: 100%;
+            border: none;
+            border-radius: 10px;
+            background: #2563eb;
+            color: #ffffff;
+            padding: 12px 16px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: not-allowed;
+            opacity: 0.85;
+          }
+
           #error {
             margin-top: 8px;
             min-height: 1.2em;
@@ -109,13 +163,62 @@ app.get('/', (req, res) => {
           <input id="file-upload" type="file" multiple />
 
           <div id="file-count">No files selected.</div>
+          <ul id="file-list"></ul>
+
+          <button class="upload-action" type="button" aria-disabled="true">Upload</button>
           <div id="error"></div>
         </main>
 
         <script>
           const fileInput = document.getElementById('file-upload');
           const fileCount = document.getElementById('file-count');
+          const fileList = document.getElementById('file-list');
           const error = document.getElementById('error');
+          let selectedFiles = [];
+
+          function syncInputFiles() {
+            const dataTransfer = new DataTransfer();
+            selectedFiles.forEach((file) => dataTransfer.items.add(file));
+            fileInput.files = dataTransfer.files;
+          }
+
+          function updateFileCount() {
+            fileCount.textContent =
+              selectedFiles.length === 0
+                ? 'No files selected.'
+                : selectedFiles.length === 1
+                  ? '1 file selected.'
+                  : selectedFiles.length + ' files selected.';
+          }
+
+          function renderFileList() {
+            fileList.innerHTML = '';
+
+            selectedFiles.forEach((file, index) => {
+              const item = document.createElement('li');
+              item.className = 'file-item';
+
+              const name = document.createElement('span');
+              name.className = 'file-name';
+              name.textContent = file.name;
+
+              const remove = document.createElement('button');
+              remove.type = 'button';
+              remove.className = 'remove-file';
+              remove.setAttribute('aria-label', 'Remove ' + file.name);
+              remove.textContent = '✕';
+              remove.addEventListener('click', () => {
+                selectedFiles.splice(index, 1);
+                syncInputFiles();
+                updateFileCount();
+                renderFileList();
+              });
+
+              item.appendChild(name);
+              item.appendChild(remove);
+              fileList.appendChild(item);
+            });
+          }
 
           fileInput.addEventListener('change', () => {
             const files = Array.from(fileInput.files || []);
@@ -123,17 +226,16 @@ app.get('/', (req, res) => {
             if (files.length > 5) {
               error.textContent = 'You can upload a maximum of 5 files.';
               fileInput.value = '';
+              selectedFiles = [];
               fileCount.textContent = 'No files selected.';
+              fileList.innerHTML = '';
               return;
             }
 
             error.textContent = '';
-            fileCount.textContent =
-              files.length === 0
-                ? 'No files selected.'
-                : files.length === 1
-                  ? '1 file selected.'
-                  : files.length + ' files selected.';
+            selectedFiles = files;
+            updateFileCount();
+            renderFileList();
           });
         </script>
       </body>
