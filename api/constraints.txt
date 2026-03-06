@@ -1,0 +1,3 @@
+# Security floor pins used by Docker build and CI image scanning.
+jaraco.context>=6.1.0
+wheel>=0.46.2

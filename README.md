@@ -79,6 +79,12 @@ GitHub Actions injects secrets per environment:
 
 Jobs write secrets to ephemeral files under `infra/secrets/`, validate `docker compose config`, then clean files up.
 
+
+
+### Trivy remediation note (Python image)
+
+The API Docker build uses `api/constraints.txt` to enforce patched minimum versions for vulnerable transitive Python packages used by installer tooling (for example `jaraco.context` and `wheel`).
+
 ## Secret scanning gate
 
 A dedicated workflow (`.github/workflows/secret-scan.yml`) blocks merges when potential plaintext secrets are committed by running Gitleaks on pushes and pull requests.
