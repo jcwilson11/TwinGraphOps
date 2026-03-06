@@ -8,10 +8,12 @@ services:
       - "7474:7474"
       - "7687:7687"
     environment:
-      - NEO4J_AUTH=neo4j/password
+      - NEO4J_AUTH_FILE=/run/secrets/neo4j_auth
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
+    secrets:
+      - neo4j_auth
 
   api:
     build: ./api
@@ -23,8 +25,11 @@ services:
       - neo4j
     environment:
       - NEO4J_URI=bolt://neo4j:7687
-      - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=password
+      - NEO4J_USER_FILE=/run/secrets/neo4j_user
+      - NEO4J_PASSWORD_FILE=/run/secrets/neo4j_password
+    secrets:
+      - neo4j_user
+      - neo4j_password
 
   frontend:
     build: ./frontend
@@ -42,3 +47,11 @@ services:
 volumes:
   neo4j_data:
   neo4j_logs:
+
+secrets:
+  neo4j_auth:
+    file: ./infra/secrets/neo4j_auth.txt
+  neo4j_user:
+    file: ./infra/secrets/neo4j_user.txt
+  neo4j_password:
+    file: ./infra/secrets/neo4j_password.txt
