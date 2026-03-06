@@ -42,7 +42,7 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
-    command: npm run dev
+    command: node server.js
 
 volumes:
   neo4j_data:

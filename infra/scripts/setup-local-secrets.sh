@@ -21,6 +21,11 @@ if [[ -z "$NEO4J_PASSWORD" ]]; then
   exit 1
 fi
 
+if [[ "$NEO4J_USER" != "neo4j" ]]; then
+  echo "NEO4J_USER must be 'neo4j' for Neo4j local auth. Using 'neo4j'." >&2
+  NEO4J_USER="neo4j"
+fi
+
 mkdir -p infra/secrets
 printf '%s/%s' "$NEO4J_USER" "$NEO4J_PASSWORD" > infra/secrets/neo4j_auth.txt
 printf '%s' "$NEO4J_USER" > infra/secrets/neo4j_user.txt
