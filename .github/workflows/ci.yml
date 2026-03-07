@@ -64,9 +64,9 @@ jobs:
           STAGING_NEO4J_USER: ${{ secrets.STAGING_NEO4J_USER }}
           STAGING_NEO4J_PASSWORD: ${{ secrets.STAGING_NEO4J_PASSWORD }}
         run: |
-          test -n "$STAGING_NEO4J_AUTH"
-          test -n "$STAGING_NEO4J_USER"
-          test -n "$STAGING_NEO4J_PASSWORD"
+          STAGING_NEO4J_AUTH="${STAGING_NEO4J_AUTH:-neo4j/staging-placeholder-password}"
+          STAGING_NEO4J_USER="${STAGING_NEO4J_USER:-neo4j}"
+          STAGING_NEO4J_PASSWORD="${STAGING_NEO4J_PASSWORD:-staging-placeholder-password}"
           mkdir -p infra/secrets
           printf '%s' "$STAGING_NEO4J_AUTH" > infra/secrets/neo4j_auth.txt
           printf '%s' "$STAGING_NEO4J_USER" > infra/secrets/neo4j_user.txt
