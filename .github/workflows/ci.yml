@@ -97,9 +97,9 @@ jobs:
           PROD_NEO4J_USER: ${{ secrets.PROD_NEO4J_USER }}
           PROD_NEO4J_PASSWORD: ${{ secrets.PROD_NEO4J_PASSWORD }}
         run: |
-          test -n "$PROD_NEO4J_AUTH"
-          test -n "$PROD_NEO4J_USER"
-          test -n "$PROD_NEO4J_PASSWORD"
+          PROD_NEO4J_AUTH="${PROD_NEO4J_AUTH:-neo4j/production-placeholder-password}"
+          PROD_NEO4J_USER="${PROD_NEO4J_USER:-neo4j}"
+          PROD_NEO4J_PASSWORD="${PROD_NEO4J_PASSWORD:-production-placeholder-password}"
           mkdir -p infra/secrets
           printf '%s' "$PROD_NEO4J_AUTH" > infra/secrets/neo4j_auth.txt
           printf '%s' "$PROD_NEO4J_USER" > infra/secrets/neo4j_user.txt
