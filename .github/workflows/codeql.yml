@@ -1,0 +1,60 @@
+name: CodeQL
+
+on:
+  push:
+    branches: ["main", "dev", "Dev", "twin-*"]
+  pull_request:
+    branches: ["main", "dev", "Dev"]
+  schedule:
+    - cron: '0 9 * * 1'
+
+jobs:
+  analyze-python:
+    name: Analyze (python)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL (python)
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+
+      - name: Autobuild (python)
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis (python)
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:python
+
+  analyze-javascript:
+    name: Analyze (javascript)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL (javascript)
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript
+
+      - name: Autobuild (javascript)
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis (javascript)
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:javascript

@@ -2,24 +2,112 @@ name: TwinGraphOps CI
 
 on:
   push:
+    branches: ["main", "dev", "Dev", "twin-*"]
   pull_request:
+    branches: ["main", "dev", "Dev"]
 
 jobs:
-  build-and-scan:
+  build-and-smoke-test:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
-
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v3
+        uses: actions/checkout@v4
 
       - name: Build Docker images
         run: docker compose build
 
-      - name: Run Trivy container scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: fs
-          scan-ref: .
+      - name: Create CI secret files for smoke test
+        run: |
+          mkdir -p infra/secrets
+          printf '%s' 'neo4j/ci-password' > infra/secrets/neo4j_auth.txt
+          printf '%s' 'neo4j' > infra/secrets/neo4j_user.txt
+          printf '%s' 'ci-password' > infra/secrets/neo4j_password.txt
+
+      - name: Compose up (smoke test)
+        run: docker compose up -d --build
+
+      - name: Wait for API health
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8000/health > /dev/null; then
+              echo "API health check passed"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API health check failed"
+          docker compose logs api
+          exit 1
+
+      - name: Cleanup compose stack and CI secret files
+        if: always()
+        run: |
+          docker compose down -v
+          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt
+
+  validate-staging-config:
+    if: |
+      (github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/Dev')) ||
+      (github.event_name == 'pull_request' && (github.base_ref == 'dev' || github.base_ref == 'Dev'))
+    needs: build-and-smoke-test
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Prepare staging secret files
+        env:
+          STAGING_NEO4J_AUTH: ${{ secrets.STAGING_NEO4J_AUTH }}
+          STAGING_NEO4J_USER: ${{ secrets.STAGING_NEO4J_USER }}
+          STAGING_NEO4J_PASSWORD: ${{ secrets.STAGING_NEO4J_PASSWORD }}
+        run: |
+          STAGING_NEO4J_AUTH="${STAGING_NEO4J_AUTH:-neo4j/staging-placeholder-password}"
+          STAGING_NEO4J_USER="${STAGING_NEO4J_USER:-neo4j}"
+          STAGING_NEO4J_PASSWORD="${STAGING_NEO4J_PASSWORD:-staging-placeholder-password}"
+          mkdir -p infra/secrets
+          printf '%s' "$STAGING_NEO4J_AUTH" > infra/secrets/neo4j_auth.txt
+          printf '%s' "$STAGING_NEO4J_USER" > infra/secrets/neo4j_user.txt
+          printf '%s' "$STAGING_NEO4J_PASSWORD" > infra/secrets/neo4j_password.txt
+
+      - name: Validate compose config (staging)
+        run: docker compose config > /tmp/docker-compose.staging.rendered.yml
+
+      - name: Cleanup staging secret files
+        if: always()
+        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt
+
+  validate-production-config:
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && github.base_ref == 'main')
+    needs: build-and-smoke-test
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Prepare production secret files
+        env:
+          PROD_NEO4J_AUTH: ${{ secrets.PROD_NEO4J_AUTH }}
+          PROD_NEO4J_USER: ${{ secrets.PROD_NEO4J_USER }}
+          PROD_NEO4J_PASSWORD: ${{ secrets.PROD_NEO4J_PASSWORD }}
+        run: |
+          test -n "$PROD_NEO4J_AUTH"
+          test -n "$PROD_NEO4J_USER"
+          test -n "$PROD_NEO4J_PASSWORD"
+          mkdir -p infra/secrets
+          printf '%s' "$PROD_NEO4J_AUTH" > infra/secrets/neo4j_auth.txt
+          printf '%s' "$PROD_NEO4J_USER" > infra/secrets/neo4j_user.txt
+          printf '%s' "$PROD_NEO4J_PASSWORD" > infra/secrets/neo4j_password.txt
+
+      - name: Validate compose config (production)
+        run: docker compose config > /tmp/docker-compose.production.rendered.yml
+
+      - name: Cleanup production secret files
+        if: always()
+        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt
