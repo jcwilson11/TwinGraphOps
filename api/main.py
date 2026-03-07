@@ -55,6 +55,10 @@ driver = GraphDatabase.driver(
     auth=(NEO4J_USER, NEO4J_PASSWORD),
 )
 
+@app.get("/")
+def root():
+    return {"service": "twin_api", "status": "ok", "docs": "/docs", "health": "/health"}
+    
 
 @app.get("/health")
 def health():
