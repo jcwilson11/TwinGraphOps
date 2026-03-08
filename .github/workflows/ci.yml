@@ -2,9 +2,9 @@ name: TwinGraphOps CI
 
 on:
   push:
-    branches: ["main", "dev", "Dev", "twin-*"]
+    branches: ["main", "dev", "twin-*"]
   pull_request:
-    branches: ["main", "dev", "Dev"]
+    branches: ["main", "dev"]
 
 jobs:
   build-and-smoke-test:
@@ -48,8 +48,8 @@ jobs:
 
   validate-staging-config:
     if: |
-      (github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/Dev')) ||
-      (github.event_name == 'pull_request' && (github.base_ref == 'dev' || github.base_ref == 'Dev'))
+      (github.event_name == 'push' && github.ref == 'refs/heads/dev') ||
+      (github.event_name == 'pull_request' && github.base_ref == 'dev')
     needs: build-and-smoke-test
     runs-on: ubuntu-latest
     environment: staging
@@ -111,3 +111,31 @@ jobs:
       - name: Cleanup production secret files
         if: always()
         run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt
+
+  deploy-staging:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    needs: [build-and-smoke-test, validate-staging-config]
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Deploy to staging
+        run: |
+          echo "Run staging deployment here"
+
+  deploy-production:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build-and-smoke-test, validate-production-config]
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Deploy to production
+        run: |
+          echo "Run production deployment here"
