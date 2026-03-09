@@ -44,17 +44,31 @@ jobs:
 
       - name: Verify API and frontend smoke checks
         run: |
+          check_url() {
+            local url="$1"
+            if ! curl -fsS "$url" > /dev/null; then
+              echo "Check failed: $url"
+              return 1
+            fi
+          }
+
           for i in {1..45}; do
-            if curl -fsS http://localhost:8000/health > /dev/null \
-              && curl -fsS http://localhost:8000/ready > /dev/null \
-              && curl -fsS http://localhost:8000/metrics > /dev/null \
-              && curl -fsS http://localhost:3000/healthz > /dev/null; then
+            echo "Smoke attempt $i/45"
+            if check_url http://localhost:8000/health \
+              && check_url http://localhost:8000/ready \
+              && check_url http://localhost:8000/metrics \
+              && check_url http://localhost:3000/healthz; then
               echo "Smoke checks passed"
               exit 0
+            fi
+            if [ "$i" -eq 15 ] || [ "$i" -eq 30 ]; then
+              docker compose ps
             fi
             sleep 2
           done
           echo "Smoke checks failed"
+          docker compose ps
+          docker compose logs --tail=100
           exit 1
 
       - name: Show running services
@@ -183,17 +197,31 @@ jobs:
 
       - name: Verify staging deployment
         run: |
+          check_url() {
+            local url="$1"
+            if ! curl -fsS "$url" > /dev/null; then
+              echo "Check failed: $url"
+              return 1
+            fi
+          }
+
           for i in {1..45}; do
-            if curl -fsS http://localhost:8000/health > /dev/null \
-              && curl -fsS http://localhost:8000/ready > /dev/null \
-              && curl -fsS http://localhost:8000/metrics > /dev/null \
-              && curl -fsS http://localhost:3000/healthz > /dev/null; then
+            echo "Staging attempt $i/45"
+            if check_url http://localhost:8000/health \
+              && check_url http://localhost:8000/ready \
+              && check_url http://localhost:8000/metrics \
+              && check_url http://localhost:3000/healthz; then
               echo "Staging promotion checks passed"
               exit 0
+            fi
+            if [ "$i" -eq 15 ] || [ "$i" -eq 30 ]; then
+              docker compose ps
             fi
             sleep 2
           done
           echo "Staging promotion checks failed"
+          docker compose ps
+          docker compose logs --tail=100
           exit 1
 
       - name: Record staging deployment evidence
@@ -242,17 +270,31 @@ jobs:
 
       - name: Verify production deployment
         run: |
+          check_url() {
+            local url="$1"
+            if ! curl -fsS "$url" > /dev/null; then
+              echo "Check failed: $url"
+              return 1
+            fi
+          }
+
           for i in {1..45}; do
-            if curl -fsS http://localhost:8000/health > /dev/null \
-              && curl -fsS http://localhost:8000/ready > /dev/null \
-              && curl -fsS http://localhost:8000/metrics > /dev/null \
-              && curl -fsS http://localhost:3000/healthz > /dev/null; then
+            echo "Production attempt $i/45"
+            if check_url http://localhost:8000/health \
+              && check_url http://localhost:8000/ready \
+              && check_url http://localhost:8000/metrics \
+              && check_url http://localhost:3000/healthz; then
               echo "Production promotion checks passed"
               exit 0
+            fi
+            if [ "$i" -eq 15 ] || [ "$i" -eq 30 ]; then
+              docker compose ps
             fi
             sleep 2
           done
           echo "Production promotion checks failed"
+          docker compose ps
+          docker compose logs --tail=100
           exit 1
 
       - name: Record production deployment evidence
