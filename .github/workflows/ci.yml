@@ -7,12 +7,25 @@ on:
     branches: ["main", "dev"]
 
 jobs:
-  build-and-smoke-test:
+  build-test-and-smoke:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run API unit tests
+        env:
+          TWIN_ENV: ci
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r api/requirements.txt
+          python -m unittest discover -s api/tests -v
 
       - name: Build Docker images
         run: docker compose build
@@ -25,20 +38,31 @@ jobs:
           printf '%s' 'ci-password' > infra/secrets/neo4j_password.txt
 
       - name: Compose up (smoke test)
+        env:
+          TWIN_ENV: ci
         run: docker compose up -d --build
 
-      - name: Wait for API health
+      - name: Verify API and frontend smoke checks
         run: |
-          for i in {1..30}; do
-            if curl -fsS http://localhost:8000/health > /dev/null; then
-              echo "API health check passed"
+          for i in {1..45}; do
+            if curl -fsS http://localhost:8000/health > /dev/null \
+              && curl -fsS http://localhost:8000/ready > /dev/null \
+              && curl -fsS http://localhost:8000/metrics > /dev/null \
+              && curl -fsS http://localhost:3000/healthz > /dev/null; then
+              echo "Smoke checks passed"
               exit 0
             fi
             sleep 2
           done
-          echo "API health check failed"
-          docker compose logs api
+          echo "Smoke checks failed"
           exit 1
+
+      - name: Show running services
+        run: docker compose ps
+
+      - name: Show compose logs on failure
+        if: failure()
+        run: docker compose logs --tail=200
 
       - name: Cleanup compose stack and CI secret files
         if: always()
@@ -50,7 +74,7 @@ jobs:
     if: |
       (github.event_name == 'push' && github.ref == 'refs/heads/dev') ||
       (github.event_name == 'pull_request' && github.base_ref == 'dev')
-    needs: build-and-smoke-test
+    needs: build-test-and-smoke
     runs-on: ubuntu-latest
     environment: staging
 
@@ -64,16 +88,24 @@ jobs:
           STAGING_NEO4J_USER: ${{ secrets.STAGING_NEO4J_USER }}
           STAGING_NEO4J_PASSWORD: ${{ secrets.STAGING_NEO4J_PASSWORD }}
         run: |
-          STAGING_NEO4J_AUTH="${STAGING_NEO4J_AUTH:-neo4j/staging-placeholder-password}"
+          STAGING_NEO4J_AUTH="${STAGING_NEO4J_AUTH:-neo4j/staging-demo-password}"
           STAGING_NEO4J_USER="${STAGING_NEO4J_USER:-neo4j}"
-          STAGING_NEO4J_PASSWORD="${STAGING_NEO4J_PASSWORD:-staging-placeholder-password}"
+          STAGING_NEO4J_PASSWORD="${STAGING_NEO4J_PASSWORD:-staging-demo-password}"
           mkdir -p infra/secrets
           printf '%s' "$STAGING_NEO4J_AUTH" > infra/secrets/neo4j_auth.txt
           printf '%s' "$STAGING_NEO4J_USER" > infra/secrets/neo4j_user.txt
           printf '%s' "$STAGING_NEO4J_PASSWORD" > infra/secrets/neo4j_password.txt
 
       - name: Validate compose config (staging)
+        env:
+          TWIN_ENV: staging
         run: docker compose config > /tmp/docker-compose.staging.rendered.yml
+
+      - name: Upload staging config artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-compose-staging
+          path: /tmp/docker-compose.staging.rendered.yml
 
       - name: Cleanup staging secret files
         if: always()
@@ -83,7 +115,7 @@ jobs:
     if: |
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' && github.base_ref == 'main')
-    needs: build-and-smoke-test
+    needs: build-test-and-smoke
     runs-on: ubuntu-latest
     environment: production
 
@@ -97,16 +129,24 @@ jobs:
           PROD_NEO4J_USER: ${{ secrets.PROD_NEO4J_USER }}
           PROD_NEO4J_PASSWORD: ${{ secrets.PROD_NEO4J_PASSWORD }}
         run: |
-          PROD_NEO4J_AUTH="${PROD_NEO4J_AUTH:-neo4j/production-placeholder-password}"
-          PROD_NEO4J_USER="${PROD_NEO4J_USER:-neo4j}"
-          PROD_NEO4J_PASSWORD="${PROD_NEO4J_PASSWORD:-production-placeholder-password}"
+          test -n "$PROD_NEO4J_AUTH"
+          test -n "$PROD_NEO4J_USER"
+          test -n "$PROD_NEO4J_PASSWORD"
           mkdir -p infra/secrets
           printf '%s' "$PROD_NEO4J_AUTH" > infra/secrets/neo4j_auth.txt
           printf '%s' "$PROD_NEO4J_USER" > infra/secrets/neo4j_user.txt
           printf '%s' "$PROD_NEO4J_PASSWORD" > infra/secrets/neo4j_password.txt
 
       - name: Validate compose config (production)
+        env:
+          TWIN_ENV: production
         run: docker compose config > /tmp/docker-compose.production.rendered.yml
+
+      - name: Upload production config artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-compose-production
+          path: /tmp/docker-compose.production.rendered.yml
 
       - name: Cleanup production secret files
         if: always()
@@ -114,7 +154,7 @@ jobs:
 
   deploy-staging:
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
-    needs: [build-and-smoke-test, validate-staging-config]
+    needs: [build-test-and-smoke, validate-staging-config]
     runs-on: ubuntu-latest
     environment: staging
 
@@ -122,13 +162,58 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Deploy to staging
+      - name: Prepare staging secret files
+        env:
+          STAGING_NEO4J_AUTH: ${{ secrets.STAGING_NEO4J_AUTH }}
+          STAGING_NEO4J_USER: ${{ secrets.STAGING_NEO4J_USER }}
+          STAGING_NEO4J_PASSWORD: ${{ secrets.STAGING_NEO4J_PASSWORD }}
         run: |
-          echo "Run staging deployment here"
+          STAGING_NEO4J_AUTH="${STAGING_NEO4J_AUTH:-neo4j/staging-demo-password}"
+          STAGING_NEO4J_USER="${STAGING_NEO4J_USER:-neo4j}"
+          STAGING_NEO4J_PASSWORD="${STAGING_NEO4J_PASSWORD:-staging-demo-password}"
+          mkdir -p infra/secrets
+          printf '%s' "$STAGING_NEO4J_AUTH" > infra/secrets/neo4j_auth.txt
+          printf '%s' "$STAGING_NEO4J_USER" > infra/secrets/neo4j_user.txt
+          printf '%s' "$STAGING_NEO4J_PASSWORD" > infra/secrets/neo4j_password.txt
+
+      - name: Simulate staging deployment
+        env:
+          TWIN_ENV: staging
+        run: docker compose up -d --build
+
+      - name: Verify staging deployment
+        run: |
+          for i in {1..45}; do
+            if curl -fsS http://localhost:8000/health > /dev/null \
+              && curl -fsS http://localhost:8000/ready > /dev/null \
+              && curl -fsS http://localhost:8000/metrics > /dev/null \
+              && curl -fsS http://localhost:3000/healthz > /dev/null; then
+              echo "Staging promotion checks passed"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Staging promotion checks failed"
+          exit 1
+
+      - name: Record staging deployment evidence
+        run: |
+          docker compose ps
+          curl -fsS http://localhost:8000/metrics
+
+      - name: Show staging logs on failure
+        if: failure()
+        run: docker compose logs --tail=200
+
+      - name: Cleanup staging deployment simulation
+        if: always()
+        run: |
+          docker compose down -v
+          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt
 
   deploy-production:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [build-and-smoke-test, validate-production-config]
+    needs: [build-test-and-smoke, validate-production-config]
     runs-on: ubuntu-latest
     environment: production
 
@@ -136,6 +221,51 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Deploy to production
+      - name: Prepare production secret files
+        env:
+          PROD_NEO4J_AUTH: ${{ secrets.PROD_NEO4J_AUTH }}
+          PROD_NEO4J_USER: ${{ secrets.PROD_NEO4J_USER }}
+          PROD_NEO4J_PASSWORD: ${{ secrets.PROD_NEO4J_PASSWORD }}
         run: |
-          echo "Run production deployment here"
+          test -n "$PROD_NEO4J_AUTH"
+          test -n "$PROD_NEO4J_USER"
+          test -n "$PROD_NEO4J_PASSWORD"
+          mkdir -p infra/secrets
+          printf '%s' "$PROD_NEO4J_AUTH" > infra/secrets/neo4j_auth.txt
+          printf '%s' "$PROD_NEO4J_USER" > infra/secrets/neo4j_user.txt
+          printf '%s' "$PROD_NEO4J_PASSWORD" > infra/secrets/neo4j_password.txt
+
+      - name: Simulate production deployment
+        env:
+          TWIN_ENV: production
+        run: docker compose up -d --build
+
+      - name: Verify production deployment
+        run: |
+          for i in {1..45}; do
+            if curl -fsS http://localhost:8000/health > /dev/null \
+              && curl -fsS http://localhost:8000/ready > /dev/null \
+              && curl -fsS http://localhost:8000/metrics > /dev/null \
+              && curl -fsS http://localhost:3000/healthz > /dev/null; then
+              echo "Production promotion checks passed"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Production promotion checks failed"
+          exit 1
+
+      - name: Record production deployment evidence
+        run: |
+          docker compose ps
+          curl -fsS http://localhost:8000/metrics
+
+      - name: Show production logs on failure
+        if: failure()
+        run: docker compose logs --tail=200
+
+      - name: Cleanup production deployment simulation
+        if: always()
+        run: |
+          docker compose down -v
+          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt
