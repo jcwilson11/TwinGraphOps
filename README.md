@@ -1,3 +1,251 @@
 # TwinGraphOps
 
-Hello World!
+TwinGraphOps is a doc-driven digital twin demo that uses a FastAPI backend, a Neo4j graph store, and an Express frontend. This repo is structured so that the microservice application is intentionally simple, but the delivery workflow demonstrates automated build, test, security scanning, staged promotion, health checks, and rollback planning.
+
+## Project Overview
+
+TwinGraphOps models system dependencies in a knowledge graph so a user can:
+
+- upload or describe dependencies
+- inspect graph relationships
+- seed and query a simple digital twin
+- verify service health and readiness
+- observe minimal operational metrics during delivery validation
+
+## Architecture Summary
+
+The runtime stack in this repo is:
+
+- `frontend`: Express UI for the upload/demo flow
+- `api`: FastAPI service for graph ingestion and query endpoints
+- `neo4j`: graph database used as the digital twin store
+
+```mermaid
+flowchart LR
+    User --> Frontend
+    Frontend --> API
+    API --> Neo4j
+    Developer --> GitHubActions
+    GitHubActions --> SecurityScans
+    GitHubActions --> BuildSmoke
+    BuildSmoke --> StagingPromotion
+    StagingPromotion --> ProductionPromotion
+```
+
+## DevSecOps Pipeline Summary
+
+The repository uses GitHub Actions to model a deployment pipeline:
+
+1. Developer pushes code or opens a pull request.
+2. CI runs Python unit tests for the API.
+3. CI builds Docker images with `docker compose build`.
+4. CI starts the full stack with ephemeral secret files.
+5. CI verifies:
+   - API liveness: `/health`
+   - API readiness: `/ready`
+   - API metrics: `/metrics`
+   - frontend health: `/healthz`
+6. Security workflows run separately for:
+   - secret scanning with Gitleaks
+   - static analysis with CodeQL
+   - filesystem and image vulnerability scanning with Trivy
+7. Pushes to `dev` run a **staging-like promotion** job.
+8. Pushes to `main` run a **production-like promotion** job gated by the GitHub `production` environment.
+
+This follows the deployment-pipeline pattern covered in Len Bass' *DevOps: A Software Architect's Perspective*: commit, build, test, stage, promote.
+
+GitHub branch protection is designed to mark the CI, Trivy, Gitleaks, and CodeQL workflows as required checks so the separate security workflows act as promotion gates.
+
+## Environment Model
+
+Currently, the project uses logical environments rather than real cloud infrastructure. If time permits, we'd like to add a cloud deployment to demonstrate the same promotion logic in a real runtime.
+
+| Environment | Purpose | How it is represented |
+| --- | --- | --- |
+| `local` | developer workstation | `docker compose up --build` |
+| `ci` | automated verification | GitHub Actions smoke test job |
+| `staging` | pre-release promotion | `deploy-staging` workflow job |
+| `production` | gated final promotion | `deploy-production` workflow job |
+
+The `TWIN_ENV` variable is injected into the services so environment state is visible in health responses and metrics.
+
+## Security Controls Used
+
+This project treats security as part of delivery, adopting the DevSecOps mindset of "shifting left" security controls into the CI/CD pipeline. The following table summarizes the security controls and their purpose.
+
+| Control | Tool / Practice | DevSecOps purpose |
+| --- | --- | --- |
+| Secret detection | `secret-scan.yml` with Gitleaks | Prevent accidental credential commits |
+| Static analysis | `codeql.yml` | Detect common code-level security issues |
+| Dependency and image scanning | `trivy.yml` | Detect vulnerable packages and container layers |
+| Secret isolation | `infra/secrets/*.txt` ignored in git | Keep operational credentials out of version control |
+| Environment-based secrets | GitHub Actions environment secrets | Separate CI, staging, and production-like credentials |
+
+Confidentiality, integrity, and availability are addressed in a class-project form:
+
+- Confidentiality: secrets are injected, not committed
+- Integrity: code and infrastructure changes are versioned and validated through CI
+- Availability: health checks, readiness checks, and staged promotion reduce broken deployments
+
+## Infrastructure-as-Code 
+
+This repo demonstrates the infrastructure-as-code mindset through committed delivery artifacts:
+
+- `docker-compose.yml`: runtime topology, secrets, health checks
+- `.github/workflows/ci.yml`: build, test, smoke, staging, production-like promotion
+- `.github/workflows/trivy.yml`: vulnerability scanning
+- `.github/workflows/secret-scan.yml`: secret scanning
+- `.github/workflows/codeql.yml`: static analysis
+
+These files are part of the system architecture because they define how software moves from code to a validated deployment state.
+
+## Health, Readiness, And Monitoring
+
+Operational visibility is intentionally lightweight but explicit.
+
+### API endpoints
+
+- `GET /health`: liveness check
+- `GET /ready`: readiness check against Neo4j
+- `GET /health/neo4j`: dependency-specific health
+- `GET /metrics`: simple Prometheus-style metrics payload
+
+### Frontend endpoint
+
+- `GET /healthz`: UI/service health response
+
+### What the metrics show
+
+The API exposes simple counters and gauges
+
+- total request count
+- per-endpoint request count
+- process uptime
+- current environment label
+
+### Logs
+
+Runtime logs are available through Docker Compose:
+
+```bash
+docker compose logs api
+docker compose logs frontend
+docker compose logs neo4j
+```
+
+## Running The Project Locally
+
+### 1. Create local secret files
+
+```bash
+./infra/scripts/setup-local-secrets.sh
+```
+
+On Windows PowerShell, you can also create the files manually in `infra/secrets/`.
+
+Required files:
+
+- `infra/secrets/neo4j_auth.txt`
+- `infra/secrets/neo4j_user.txt`
+- `infra/secrets/neo4j_password.txt`
+
+### 2. Start the stack
+
+```bash
+docker compose up --build
+```
+
+### 3. Check the services
+
+```bash
+curl http://localhost:8000/health
+curl http://localhost:8000/ready
+curl http://localhost:8000/metrics
+curl http://localhost:3000/healthz
+```
+
+## Minimal Test Coverage
+
+The repo includes lightweight API unit tests to show that CI verifies more than container startup.
+
+Run locally:
+
+```bash
+python -m pip install -r api/requirements.txt
+python -m unittest discover -s api/tests -v
+```
+
+The tests cover:
+
+- root endpoint contract
+- readiness success path
+- readiness failure behavior
+- metrics output and request counters
+
+## Deployment And Promotion 
+
+Currently, this project does not deploy to a real cloud environment. Instead, it demonstrates promotion logic through GitHub Actions jobs. If time permits, we would like to add a cloud deployment to demonstrate the same promotion logic in a real runtime.
+
+### Staging-like promotion
+
+The `deploy-staging` job:
+
+- creates staging secret files
+- starts the Compose stack with `TWIN_ENV=staging`
+- verifies liveness, readiness, frontend health, and metrics
+- records evidence in workflow logs
+
+### Production-like promotion
+
+The `deploy-production` job:
+
+- is tied to the GitHub `production` environment
+- requires production secrets
+- starts the same stack with `TWIN_ENV=production`
+- verifies final promotion checks
+
+This models the difference between staging and production even though both run as simulated delivery stages inside CI.
+
+## Rollback Procedure
+
+This repo documents rollback as a repeatable operator action rather than an automated cloud rollback.
+
+### If a deployment-like promotion fails
+
+1. Inspect the GitHub Actions logs for the failing job.
+2. Inspect service logs:
+   - `docker compose logs api`
+   - `docker compose logs frontend`
+   - `docker compose logs neo4j`
+3. Check:
+   - `GET /health`
+   - `GET /ready`
+   - `GET /health/neo4j`
+   - `GET /metrics`
+4. Stop the stack:
+
+```bash
+docker compose down -v
+```
+
+5. Re-deploy the last known-good commit:
+
+```bash
+git checkout <known-good-commit>
+docker compose up --build
+```
+
+## Evidence Table
+
+| DevSecOps requirement | Evidence in repo |
+| --- | --- |
+| Automated CI | `.github/workflows/ci.yml` |
+| Build and smoke validation | `.github/workflows/ci.yml` |
+| Secret scanning | `.github/workflows/secret-scan.yml` |
+| Static analysis | `.github/workflows/codeql.yml` |
+| Vulnerability scanning | `.github/workflows/trivy.yml` |
+| Environment separation | `.github/workflows/ci.yml`, `docker-compose.yml` |
+| Secret isolation | `.gitignore`, `infra/scripts/setup-local-secrets.sh` |
+| Health and readiness | `api/main.py`, `frontend/server.js` |
+| Metrics visibility | `api/main.py` |
+| Rollback story | this README |
