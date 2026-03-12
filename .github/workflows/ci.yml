@@ -36,6 +36,7 @@ jobs:
           printf '%s' 'neo4j/ci-password' > infra/secrets/neo4j_auth.txt
           printf '%s' 'neo4j' > infra/secrets/neo4j_user.txt
           printf '%s' 'ci-password' > infra/secrets/neo4j_password.txt
+          printf '%s' 'ci-gemini-placeholder' > infra/secrets/gemini_api_key.txt
 
       - name: Compose up (smoke test)
         env:
@@ -82,7 +83,7 @@ jobs:
         if: always()
         run: |
           docker compose down -v
-          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt
+          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
 
   validate-staging-config:
     if: |
@@ -101,14 +102,17 @@ jobs:
           STAGING_NEO4J_AUTH: ${{ secrets.STAGING_NEO4J_AUTH }}
           STAGING_NEO4J_USER: ${{ secrets.STAGING_NEO4J_USER }}
           STAGING_NEO4J_PASSWORD: ${{ secrets.STAGING_NEO4J_PASSWORD }}
+          STAGING_GEMINI_API_KEY: ${{ secrets.STAGING_GEMINI_API_KEY }}
         run: |
           STAGING_NEO4J_AUTH="${STAGING_NEO4J_AUTH:-neo4j/staging-demo-password}"
           STAGING_NEO4J_USER="${STAGING_NEO4J_USER:-neo4j}"
           STAGING_NEO4J_PASSWORD="${STAGING_NEO4J_PASSWORD:-staging-demo-password}"
+          STAGING_GEMINI_API_KEY="${STAGING_GEMINI_API_KEY:-staging-gemini-placeholder}"
           mkdir -p infra/secrets
           printf '%s' "$STAGING_NEO4J_AUTH" > infra/secrets/neo4j_auth.txt
           printf '%s' "$STAGING_NEO4J_USER" > infra/secrets/neo4j_user.txt
           printf '%s' "$STAGING_NEO4J_PASSWORD" > infra/secrets/neo4j_password.txt
+          printf '%s' "$STAGING_GEMINI_API_KEY" > infra/secrets/gemini_api_key.txt
 
       - name: Validate compose config (staging)
         env:
@@ -123,7 +127,7 @@ jobs:
 
       - name: Cleanup staging secret files
         if: always()
-        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt
+        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
 
   validate-production-config:
     if: |
@@ -142,14 +146,17 @@ jobs:
           PROD_NEO4J_AUTH: ${{ secrets.PROD_NEO4J_AUTH }}
           PROD_NEO4J_USER: ${{ secrets.PROD_NEO4J_USER }}
           PROD_NEO4J_PASSWORD: ${{ secrets.PROD_NEO4J_PASSWORD }}
+          PROD_GEMINI_API_KEY: ${{ secrets.PROD_GEMINI_API_KEY }}
         run: |
           test -n "$PROD_NEO4J_AUTH"
           test -n "$PROD_NEO4J_USER"
           test -n "$PROD_NEO4J_PASSWORD"
+          test -n "$PROD_GEMINI_API_KEY"
           mkdir -p infra/secrets
           printf '%s' "$PROD_NEO4J_AUTH" > infra/secrets/neo4j_auth.txt
           printf '%s' "$PROD_NEO4J_USER" > infra/secrets/neo4j_user.txt
           printf '%s' "$PROD_NEO4J_PASSWORD" > infra/secrets/neo4j_password.txt
+          printf '%s' "$PROD_GEMINI_API_KEY" > infra/secrets/gemini_api_key.txt
 
       - name: Validate compose config (production)
         env:
@@ -164,7 +171,7 @@ jobs:
 
       - name: Cleanup production secret files
         if: always()
-        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt
+        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
 
   deploy-staging:
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
@@ -181,14 +188,17 @@ jobs:
           STAGING_NEO4J_AUTH: ${{ secrets.STAGING_NEO4J_AUTH }}
           STAGING_NEO4J_USER: ${{ secrets.STAGING_NEO4J_USER }}
           STAGING_NEO4J_PASSWORD: ${{ secrets.STAGING_NEO4J_PASSWORD }}
+          STAGING_GEMINI_API_KEY: ${{ secrets.STAGING_GEMINI_API_KEY }}
         run: |
           STAGING_NEO4J_AUTH="${STAGING_NEO4J_AUTH:-neo4j/staging-demo-password}"
           STAGING_NEO4J_USER="${STAGING_NEO4J_USER:-neo4j}"
           STAGING_NEO4J_PASSWORD="${STAGING_NEO4J_PASSWORD:-staging-demo-password}"
+          STAGING_GEMINI_API_KEY="${STAGING_GEMINI_API_KEY:-staging-gemini-placeholder}"
           mkdir -p infra/secrets
           printf '%s' "$STAGING_NEO4J_AUTH" > infra/secrets/neo4j_auth.txt
           printf '%s' "$STAGING_NEO4J_USER" > infra/secrets/neo4j_user.txt
           printf '%s' "$STAGING_NEO4J_PASSWORD" > infra/secrets/neo4j_password.txt
+          printf '%s' "$STAGING_GEMINI_API_KEY" > infra/secrets/gemini_api_key.txt
 
       - name: Simulate staging deployment
         env:
@@ -237,7 +247,7 @@ jobs:
         if: always()
         run: |
           docker compose down -v
-          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt
+          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
 
   deploy-production:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -254,14 +264,17 @@ jobs:
           PROD_NEO4J_AUTH: ${{ secrets.PROD_NEO4J_AUTH }}
           PROD_NEO4J_USER: ${{ secrets.PROD_NEO4J_USER }}
           PROD_NEO4J_PASSWORD: ${{ secrets.PROD_NEO4J_PASSWORD }}
+          PROD_GEMINI_API_KEY: ${{ secrets.PROD_GEMINI_API_KEY }}
         run: |
           test -n "$PROD_NEO4J_AUTH"
           test -n "$PROD_NEO4J_USER"
           test -n "$PROD_NEO4J_PASSWORD"
+          test -n "$PROD_GEMINI_API_KEY"
           mkdir -p infra/secrets
           printf '%s' "$PROD_NEO4J_AUTH" > infra/secrets/neo4j_auth.txt
           printf '%s' "$PROD_NEO4J_USER" > infra/secrets/neo4j_user.txt
           printf '%s' "$PROD_NEO4J_PASSWORD" > infra/secrets/neo4j_password.txt
+          printf '%s' "$PROD_GEMINI_API_KEY" > infra/secrets/gemini_api_key.txt
 
       - name: Simulate production deployment
         env:
@@ -310,4 +323,4 @@ jobs:
         if: always()
         run: |
           docker compose down -v
-          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt
+          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt

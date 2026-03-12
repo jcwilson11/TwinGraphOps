@@ -1,18 +1,40 @@
+import io
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import main  
-from fastapi import HTTPException  
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+
+import main
+from gemini_client import GeminiExtractionError
+from graph_pipeline import build_demo_graph, compute_graph_metrics
+from models import ChunkGraph, ChunkEdge, ChunkNode, MergedGraph, model_dump_compat
+
+
+class FakeExtractor:
+    def __init__(self, graph: ChunkGraph | None = None, error: Exception | None = None) -> None:
+        self.graph = graph
+        self.error = error
+
+    def extract_chunk(self, chunk_text: str, prompt: str, chunk_index: int):
+        del chunk_text
+        del prompt
+        del chunk_index
+        if self.error is not None:
+            raise self.error
+        return self.graph, model_dump_compat(self.graph)
 
 
 class TwinGraphOpsApiTests(unittest.TestCase):
     def setUp(self):
         main.REQUEST_METRICS["total"] = 0
         main.REQUEST_METRICS["by_path"] = {}
+        self.client = TestClient(main.app)
 
     def test_root_exposes_operational_routes(self):
         response = main.root()
@@ -23,7 +45,6 @@ class TwinGraphOpsApiTests(unittest.TestCase):
     def test_ready_reports_dependency_state(self):
         with patch.object(main, "check_neo4j", return_value=(True, None)):
             response = main.ready()
-
         self.assertEqual(response["status"], "ready")
         self.assertEqual(response["dependencies"]["neo4j"], "ok")
 
@@ -31,19 +52,108 @@ class TwinGraphOpsApiTests(unittest.TestCase):
         with patch.object(main, "check_neo4j", return_value=(False, "Neo4j unavailable")):
             with self.assertRaises(HTTPException) as context:
                 main.ready()
-
         self.assertEqual(context.exception.status_code, 503)
 
     def test_metrics_include_request_totals(self):
         main.root()
         main.health()
         metrics_payload = main.metrics()
-
         self.assertIn("twingraphops_requests_total 3", metrics_payload)
         self.assertIn('twingraphops_endpoint_requests_total{path="/"} 1', metrics_payload)
         self.assertIn('twingraphops_endpoint_requests_total{path="/health"} 1', metrics_payload)
         self.assertIn('twingraphops_endpoint_requests_total{path="/metrics"} 1', metrics_payload)
 
+    def test_graph_auto_seeds_demo_when_store_is_empty(self):
+        with patch.object(main, "fetch_graph_from_store", return_value=MergedGraph()), patch.object(
+            main, "persist_graph_to_store"
+        ):
+            response = self.client.get("/graph")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["data"]["source"], "demo")
+        self.assertGreaterEqual(len(payload["data"]["nodes"]), 1)
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_seed_returns_consistent_counts(self):
+        with patch.object(main, "persist_graph_to_store"):
+            response = self.client.post("/seed")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()["data"]
+        self.assertEqual(payload["source"], "demo")
+        self.assertGreater(payload["nodes_created"], 0)
+        self.assertGreater(payload["edges_created"], 0)
+
+    def test_impact_and_risk_use_same_graph(self):
+        graph = compute_graph_metrics(build_demo_graph())
+        with patch.object(main, "ensure_active_graph", return_value=graph):
+            impact_response = self.client.get("/impact", params={"component_id": "graph-service"})
+            risk_response = self.client.get("/risk", params={"component_id": "graph-service"})
+        self.assertEqual(impact_response.status_code, 200)
+        self.assertEqual(risk_response.status_code, 200)
+        impacted = impact_response.json()["data"]["impacted_components"]
+        risk_payload = risk_response.json()["data"]
+        self.assertEqual(impacted, risk_payload["impacted_components"])
+        self.assertIn(risk_payload["level"], {"low", "medium", "high"})
+
+    def test_ingest_rejects_unsupported_extension(self):
+        response = self.client.post(
+            "/ingest",
+            files={"file": ("manual.pdf", io.BytesIO(b"pdf"), "application/pdf")},
+        )
+        self.assertEqual(response.status_code, 415)
+        self.assertEqual(response.json()["error"]["code"], "unsupported_file_type")
+
+    def test_ingest_rejects_empty_upload(self):
+        response = self.client.post(
+            "/ingest",
+            files={"file": ("manual.md", io.BytesIO(b""), "text/markdown")},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "empty_upload")
+
+    def test_ingest_persists_graph_and_artifacts(self):
+        chunk_graph = ChunkGraph(
+            nodes=[
+                ChunkNode(id="C1", name="Frontend", type="software", description="UI"),
+                ChunkNode(id="C2", name="API", type="software", description="Backend"),
+            ],
+            edges=[ChunkEdge(source="C1", target="C2", relation="depends_on", rationale="Calls the API")],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            main, "get_gemini_client", return_value=FakeExtractor(graph=chunk_graph)
+        ), patch.object(main, "persist_graph_to_store") as persist_graph, patch.object(
+            main, "get_artifacts_root", return_value=Path(tmpdir)
+        ):
+            response = self.client.post(
+                "/ingest",
+                files={"file": ("manual.md", io.BytesIO(b"Example manual text"), "text/markdown")},
+                data={"replace_existing": "true"},
+            )
+            self.assertTrue((Path(response.json()["data"]["artifacts_path"]) / "merged_graph.json").exists())
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()["data"]
+        self.assertEqual(payload["source"], "user")
+        self.assertEqual(payload["chunks_total"], 1)
+        persist_graph.assert_called_once()
+
+    def test_ingest_fails_closed_when_gemini_chunk_is_invalid(self):
+        error = GeminiExtractionError(
+            code="gemini_extraction_failed",
+            chunk_index=1,
+            validation_errors=["edges[0].source is missing"],
+            raw_payload={"nodes": [], "edges": [{}]},
+        )
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            main, "get_gemini_client", return_value=FakeExtractor(error=error)
+        ), patch.object(main, "persist_graph_to_store") as persist_graph, patch.object(
+            main, "get_artifacts_root", return_value=Path(tmpdir)
+        ):
+            response = self.client.post(
+                "/ingest",
+                files={"file": ("manual.md", io.BytesIO(b"Example manual text"), "text/markdown")},
+            )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["error"]["code"], "gemini_extraction_failed")
+        persist_graph.assert_not_called()

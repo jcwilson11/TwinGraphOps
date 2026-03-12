@@ -209,3 +209,4 @@ __marimo__/
 node_modules/
 # Local Docker secret files
 infra/secrets/*.txt
+runtime/

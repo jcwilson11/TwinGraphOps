@@ -26,12 +26,22 @@ if [[ "$NEO4J_USER" != "neo4j" ]]; then
   NEO4J_USER="neo4j"
 fi
 
+if [[ -z "${GEMINI_API_KEY:-}" ]]; then
+  read -r -p "GEMINI_API_KEY (required for /ingest, press Enter to write a placeholder): " GEMINI_API_KEY
+fi
+
+if [[ -z "${GEMINI_API_KEY}" ]]; then
+  GEMINI_API_KEY="replace-me"
+fi
+
 mkdir -p infra/secrets
 printf '%s/%s' "$NEO4J_USER" "$NEO4J_PASSWORD" > infra/secrets/neo4j_auth.txt
 printf '%s' "$NEO4J_USER" > infra/secrets/neo4j_user.txt
 printf '%s' "$NEO4J_PASSWORD" > infra/secrets/neo4j_password.txt
+printf '%s' "$GEMINI_API_KEY" > infra/secrets/gemini_api_key.txt
 
 echo "Wrote:"
 echo "  - infra/secrets/neo4j_auth.txt"
 echo "  - infra/secrets/neo4j_user.txt"
 echo "  - infra/secrets/neo4j_password.txt"
+echo "  - infra/secrets/gemini_api_key.txt"
