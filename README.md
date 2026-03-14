@@ -6,9 +6,11 @@ TwinGraphOps is a doc-driven digital twin demo that uses a FastAPI backend, a Ne
 
 TwinGraphOps models system dependencies in a knowledge graph so a user can:
 
-- upload or describe dependencies
+- upload a structured `.md` or `.txt` system manual
 - inspect graph relationships
 - seed and query a simple digital twin
+- extract graph nodes and edges with Gemini
+- score graph nodes based on propagation risk
 - verify service health and readiness
 - observe minimal operational metrics during delivery validation
 
@@ -17,7 +19,7 @@ TwinGraphOps models system dependencies in a knowledge graph so a user can:
 The runtime stack in this repo is:
 
 - `frontend`: Express UI for the upload/demo flow
-- `api`: FastAPI service for graph ingestion and query endpoints
+- `api`: FastAPI service for Gemini-backed graph ingestion and query endpoints
 - `neo4j`: graph database used as the digital twin store
 
 ```mermaid
@@ -51,8 +53,6 @@ The repository uses GitHub Actions to model a deployment pipeline:
    - filesystem and image vulnerability scanning with Trivy
 7. Pushes to `dev` run a **staging-like promotion** job.
 8. Pushes to `main` run a **production-like promotion** job gated by the GitHub `production` environment.
-
-This follows the deployment-pipeline pattern covered in Len Bass' *DevOps: A Software Architect's Perspective*: commit, build, test, stage, promote.
 
 GitHub branch protection is designed to mark the CI, Trivy, Gitleaks, and CodeQL workflows as required checks so the separate security workflows act as promotion gates.
 
@@ -109,6 +109,11 @@ Operational visibility is intentionally lightweight but explicit.
 - `GET /ready`: readiness check against Neo4j
 - `GET /health/neo4j`: dependency-specific health
 - `GET /metrics`: simple Prometheus-style metrics payload
+- `POST /ingest`: upload a `.md` or `.txt` manual and extract a graph with Gemini
+- `GET /graph`: return the active graph
+- `GET /impact?component_id=<id>`: reverse dependency blast radius
+- `GET /risk?component_id=<id>`: hybrid heuristic risk summary
+- `POST /seed`: seed the demo graph
 
 ### Frontend endpoint
 
@@ -148,6 +153,7 @@ Required files:
 - `infra/secrets/neo4j_auth.txt`
 - `infra/secrets/neo4j_user.txt`
 - `infra/secrets/neo4j_password.txt`
+- `infra/secrets/gemini_api_key.txt`
 
 ### 2. Start the stack
 
@@ -164,9 +170,29 @@ curl http://localhost:8000/metrics
 curl http://localhost:3000/healthz
 ```
 
-## Minimal Test Coverage
+### 4. Upload a manual for extraction
 
-The repo includes lightweight API unit tests to show that CI verifies more than container startup.
+The ingest pipeline accepts structured `.md` or `.txt` system manuals, chunks them, sends each chunk to Gemini for graph extraction, validates the JSON, writes the merged graph to Neo4j, and stores artifacts under `runtime/artifacts/`.
+
+Example:
+
+```bash
+curl -X POST http://localhost:8000/ingest \
+  -F "file=@api/examples/demo_system.md" \
+  -F "replace_existing=true"
+```
+
+Then inspect:
+
+```bash
+curl http://localhost:8000/graph
+curl "http://localhost:8000/impact?component_id=api"
+curl "http://localhost:8000/risk?component_id=api"
+```
+
+## Test Coverage
+
+The repo includes API unit tests to show that CI verifies more than container startup.
 
 Run locally:
 
@@ -181,6 +207,9 @@ The tests cover:
 - readiness success path
 - readiness failure behavior
 - metrics output and request counters
+- upload validation and Gemini ingest flow with mocks
+- graph merge and heuristic risk scoring
+- Gemini retry and validation behavior
 
 ## Deployment And Promotion 
 
