@@ -1,4 +1,5 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const fs = require('fs');
 const path = require('path');
 
@@ -11,8 +12,17 @@ const PUBLIC_MAX_UPLOAD_MB = Number(process.env.PUBLIC_MAX_UPLOAD_MB || process.
 const PUBLIC_PROCESSING_TIMEOUT_MS = Number(
   process.env.PUBLIC_PROCESSING_TIMEOUT_MS || process.env.VITE_PROCESSING_TIMEOUT_MS || 90000
 );
+const STATIC_RATE_LIMIT_WINDOW_MS = Number(process.env.STATIC_RATE_LIMIT_WINDOW_MS || 60_000);
+const STATIC_RATE_LIMIT_MAX = Number(process.env.STATIC_RATE_LIMIT_MAX || 120);
 const DIST_DIR = path.join(__dirname, 'dist');
 let requestCount = 0;
+const staticAssetLimiter = rateLimit({
+  windowMs: STATIC_RATE_LIMIT_WINDOW_MS,
+  limit: STATIC_RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many requests. Please try again shortly.',
+});
 
 app.use((req, res, next) => {
   requestCount += 1;
@@ -45,9 +55,9 @@ app.get('/config.js', (req, res) => {
 });
 
 if (fs.existsSync(DIST_DIR)) {
-  app.use(express.static(DIST_DIR));
+  app.use(staticAssetLimiter, express.static(DIST_DIR));
 
-  app.get('*', (req, res) => {
+  app.get('*', staticAssetLimiter, (req, res) => {
     res.sendFile(path.join(DIST_DIR, 'index.html'));
   });
 } else {
