@@ -14,8 +14,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -210,3 +210,4 @@ node_modules/
 # Local Docker secret files
 infra/secrets/*.txt
 runtime/
+.tmp/
