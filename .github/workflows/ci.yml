@@ -88,7 +88,9 @@ jobs:
   validate-staging-config:
     if: |
       (github.event_name == 'push' && github.ref == 'refs/heads/dev') ||
-      (github.event_name == 'pull_request' && github.base_ref == 'dev')
+      (github.event_name == 'pull_request' &&
+       github.base_ref == 'dev' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     needs: build-test-and-smoke
     runs-on: ubuntu-latest
     environment: staging
@@ -104,6 +106,9 @@ jobs:
           STAGING_NEO4J_PASSWORD: ${{ secrets.STAGING_NEO4J_PASSWORD }}
           STAGING_GEMINI_API_KEY: ${{ secrets.STAGING_GEMINI_API_KEY }}
         run: |
+          if [ -z "$STAGING_NEO4J_AUTH" ] || [ -z "$STAGING_NEO4J_USER" ] || [ -z "$STAGING_NEO4J_PASSWORD" ] || [ -z "$STAGING_GEMINI_API_KEY" ]; then
+            echo "Staging environment secrets were not fully available. Falling back to demo values for config validation." >&2
+          fi
           STAGING_NEO4J_AUTH="${STAGING_NEO4J_AUTH:-neo4j/staging-demo-password}"
           STAGING_NEO4J_USER="${STAGING_NEO4J_USER:-neo4j}"
           STAGING_NEO4J_PASSWORD="${STAGING_NEO4J_PASSWORD:-staging-demo-password}"
@@ -132,7 +137,9 @@ jobs:
   validate-production-config:
     if: |
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && github.base_ref == 'main')
+      (github.event_name == 'pull_request' &&
+       github.base_ref == 'main' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     needs: build-test-and-smoke
     runs-on: ubuntu-latest
     environment: production
@@ -148,10 +155,17 @@ jobs:
           PROD_NEO4J_PASSWORD: ${{ secrets.PROD_NEO4J_PASSWORD }}
           PROD_GEMINI_API_KEY: ${{ secrets.PROD_GEMINI_API_KEY }}
         run: |
-          test -n "$PROD_NEO4J_AUTH"
-          test -n "$PROD_NEO4J_USER"
-          test -n "$PROD_NEO4J_PASSWORD"
-          test -n "$PROD_GEMINI_API_KEY"
+          missing=()
+          [ -n "$PROD_NEO4J_AUTH" ] || missing+=("PROD_NEO4J_AUTH")
+          [ -n "$PROD_NEO4J_USER" ] || missing+=("PROD_NEO4J_USER")
+          [ -n "$PROD_NEO4J_PASSWORD" ] || missing+=("PROD_NEO4J_PASSWORD")
+          [ -n "$PROD_GEMINI_API_KEY" ] || missing+=("PROD_GEMINI_API_KEY")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "Missing required production environment secrets: ${missing[*]}" >&2
+            echo "These values come from GitHub Actions secrets for the 'production' environment, not from local infra/secrets files." >&2
+            echo "If this run is for a forked PR or bot PR, GitHub may intentionally withhold secrets." >&2
+            exit 1
+          fi
           mkdir -p infra/secrets
           printf '%s' "$PROD_NEO4J_AUTH" > infra/secrets/neo4j_auth.txt
           printf '%s' "$PROD_NEO4J_USER" > infra/secrets/neo4j_user.txt
@@ -190,6 +204,9 @@ jobs:
           STAGING_NEO4J_PASSWORD: ${{ secrets.STAGING_NEO4J_PASSWORD }}
           STAGING_GEMINI_API_KEY: ${{ secrets.STAGING_GEMINI_API_KEY }}
         run: |
+          if [ -z "$STAGING_NEO4J_AUTH" ] || [ -z "$STAGING_NEO4J_USER" ] || [ -z "$STAGING_NEO4J_PASSWORD" ] || [ -z "$STAGING_GEMINI_API_KEY" ]; then
+            echo "Staging environment secrets were not fully available. Falling back to demo values for the deployment simulation." >&2
+          fi
           STAGING_NEO4J_AUTH="${STAGING_NEO4J_AUTH:-neo4j/staging-demo-password}"
           STAGING_NEO4J_USER="${STAGING_NEO4J_USER:-neo4j}"
           STAGING_NEO4J_PASSWORD="${STAGING_NEO4J_PASSWORD:-staging-demo-password}"
@@ -266,10 +283,17 @@ jobs:
           PROD_NEO4J_PASSWORD: ${{ secrets.PROD_NEO4J_PASSWORD }}
           PROD_GEMINI_API_KEY: ${{ secrets.PROD_GEMINI_API_KEY }}
         run: |
-          test -n "$PROD_NEO4J_AUTH"
-          test -n "$PROD_NEO4J_USER"
-          test -n "$PROD_NEO4J_PASSWORD"
-          test -n "$PROD_GEMINI_API_KEY"
+          missing=()
+          [ -n "$PROD_NEO4J_AUTH" ] || missing+=("PROD_NEO4J_AUTH")
+          [ -n "$PROD_NEO4J_USER" ] || missing+=("PROD_NEO4J_USER")
+          [ -n "$PROD_NEO4J_PASSWORD" ] || missing+=("PROD_NEO4J_PASSWORD")
+          [ -n "$PROD_GEMINI_API_KEY" ] || missing+=("PROD_GEMINI_API_KEY")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "Missing required production environment secrets: ${missing[*]}" >&2
+            echo "These values come from GitHub Actions secrets for the 'production' environment, not from local infra/secrets files." >&2
+            echo "If this run is for a forked PR or bot PR, GitHub may intentionally withhold secrets." >&2
+            exit 1
+          fi
           mkdir -p infra/secrets
           printf '%s' "$PROD_NEO4J_AUTH" > infra/secrets/neo4j_auth.txt
           printf '%s' "$PROD_NEO4J_USER" > infra/secrets/neo4j_user.txt
