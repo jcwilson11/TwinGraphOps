@@ -1,5 +1,25 @@
 const express = require('express');
+
 const app = express();
+const PORT = 3000;
+const APP_START_TIME = Date.now();
+const APP_ENV = process.env.TWIN_ENV || 'local';
+let requestCount = 0;
+
+app.use((req, res, next) => {
+  requestCount += 1;
+  next();
+});
+
+app.get('/healthz', (req, res) => {
+  res.json({
+    service: 'twin_frontend',
+    status: 'ok',
+    environment: APP_ENV,
+    uptime_seconds: Math.floor((Date.now() - APP_START_TIME) / 1000),
+    request_count: requestCount,
+  });
+});
 
 app.get('/', (req, res) => {
   res.send(`
@@ -37,6 +57,24 @@ app.get('/', (req, res) => {
             box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
             padding: 28px;
             text-align: center;
+          }
+
+          .meta {
+            display: inline-flex;
+            gap: 10px;
+            margin-bottom: 18px;
+            color: #4b5563;
+            font-size: 0.85rem;
+            flex-wrap: wrap;
+            justify-content: center;
+          }
+
+          .pill {
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: #eff6ff;
+            color: #1d4ed8;
+            border: 1px solid #bfdbfe;
           }
 
           h1 {
@@ -149,12 +187,23 @@ app.get('/', (req, res) => {
             color: #dc2626;
             font-size: 0.9rem;
           }
+
+          .footer {
+            margin-top: 18px;
+            color: #6b7280;
+            font-size: 0.85rem;
+          }
         </style>
       </head>
       <body>
         <main class="card">
+          <div class="meta">
+            <span class="pill">Environment: ${APP_ENV}</span>
+            <span class="pill">Health: /healthz</span>
+          </div>
+
           <h1>TwinGraphOps</h1>
-          <p>Please add your documentations (up to 5 files).</p>
+          <p>Please add your documentation files (up to 5 files) for ingestion and graph analysis.</p>
 
           <label class="upload-label" for="file-upload">
             <span class="plus">+</span>
@@ -167,6 +216,7 @@ app.get('/', (req, res) => {
 
           <button class="upload-action" type="button" aria-disabled="true">Upload</button>
           <div id="error"></div>
+          <div class="footer">This demo UI is wired for DevSecOps smoke checks and staged delivery validation.</div>
         </main>
 
         <script>
@@ -206,7 +256,7 @@ app.get('/', (req, res) => {
               remove.type = 'button';
               remove.className = 'remove-file';
               remove.setAttribute('aria-label', 'Remove ' + file.name);
-              remove.textContent = '✕';
+              remove.textContent = 'x';
               remove.addEventListener('click', () => {
                 selectedFiles.splice(index, 1);
                 syncInputFiles();
@@ -243,6 +293,6 @@ app.get('/', (req, res) => {
   `);
 });
 
-app.listen(3000, '0.0.0.0', () => {
-  console.log('Frontend running on port 3000');
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Frontend running on port ${PORT} in ${APP_ENV}`);
 });
