@@ -1,0 +1,105 @@
+import type { IngestResponse } from './api';
+
+export type UploadPhase =
+  | 'idle'
+  | 'drag-hover'
+  | 'file-selected'
+  | 'uploading'
+  | 'processing'
+  | 'success'
+  | 'empty-graph'
+  | 'error'
+  | 'retry';
+
+export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error';
+
+export interface GraphLinkEndpointRef {
+  id: string;
+}
+
+export interface GraphNode {
+  id: string;
+  name: string;
+  type: string;
+  description: string;
+  riskScore: number;
+  riskLevel: string;
+  degree: number;
+  betweenness: number;
+  closeness: number;
+  blastRadius: number;
+  dependencySpan: number;
+  riskExplanation: string;
+  source: string;
+  dependencies: string[];
+  dependents: string[];
+  val: number;
+}
+
+export interface GraphEdge {
+  id: string;
+  source: string | GraphLinkEndpointRef;
+  target: string | GraphLinkEndpointRef;
+  relation: string;
+  rationale: string;
+}
+
+export interface GraphData {
+  source: string;
+  nodes: GraphNode[];
+  links: GraphEdge[];
+  nodeIndex: Record<string, GraphNode>;
+  relationTypes: string[];
+}
+
+export interface NodeReference {
+  id: string;
+  name: string;
+  type: string;
+}
+
+export interface NodeDetails {
+  componentId: string;
+  name: string;
+  type: string;
+  riskScore: number;
+  riskLevel: string;
+  description: string;
+  dependencies: NodeReference[];
+  affectedSystems: NodeReference[];
+  issues: string[];
+  explanation: string;
+  impactCount: number;
+  metadata: Array<{ label: string; value: string }>;
+}
+
+export interface GraphSummary {
+  totalComponents: number;
+  totalRelationships: number;
+  avgRisk: number;
+  highRiskNodes: number;
+  highestRiskNode: GraphNode | null;
+  riskDistribution: Array<{ label: string; key: string; count: number }>;
+  typeDistribution: Array<{ type: string; count: number }>;
+  mostConnectedNodes: Array<{ node: GraphNode; connections: number }>;
+  topRiskNodes: GraphNode[];
+  blastRadiusLeaders: Array<{ node: GraphNode; count: number }>;
+}
+
+export interface UploadState {
+  phase: UploadPhase;
+  selectedFile: File | null;
+  error: string | null;
+  statusMessage: string;
+  ingestion: IngestResponse | null;
+  startedAt: number | null;
+  completedAt: number | null;
+  retryCount: number;
+}
+
+export interface GraphState {
+  status: LoadStatus;
+  data: GraphData | null;
+  error: string | null;
+  lastLoadedAt: number | null;
+}
