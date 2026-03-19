@@ -79,7 +79,7 @@ This project treats security as part of delivery, adopting the DevSecOps mindset
 | Static analysis | `codeql.yml` | Detect common code-level security issues |
 | Dependency and image scanning | `trivy.yml` | Detect vulnerable packages and container layers |
 | Secret isolation | `infra/secrets/*.txt` ignored in git | Keep operational credentials out of version control |
-| Environment-based secrets | GitHub Actions environment secrets | Separate CI, staging, and production-like credentials |
+| Environment-based secrets | AWS Secrets Manager plus GitHub Actions OIDC | Keep GitHub out of long-lived secret storage while separating environments |
 
 Confidentiality, integrity, and availability are addressed in a class-project form:
 
@@ -142,11 +142,41 @@ docker compose logs neo4j
 
 ### 1. Create local secret files
 
-```bash
-./infra/scripts/setup-local-secrets.sh
+Preferred: bootstrap them from AWS Secrets Manager so the repo keeps using `infra/secrets/*.txt` without making `.env` the source of truth.
+
+Expected AWS secret JSON:
+
+```json
+{
+  "neo4j_user": "neo4j",
+  "neo4j_password": "replace-with-real-password",
+  "gemini_api_key": "replace-with-real-api-key"
+}
 ```
 
-On Windows PowerShell, you can also create the files manually in `infra/secrets/`.
+Bash:
+
+```bash
+bash ./infra/scripts/bootstrap-secrets-from-aws.sh your/local/secret-id
+```
+
+PowerShell:
+
+```powershell
+.\infra\scripts\Bootstrap-SecretsFromAws.ps1 -SecretId your/local/secret-id -Region us-east-1
+```
+
+Manual fallback:
+
+```bash
+bash ./infra/scripts/setup-local-secrets.sh
+```
+
+Requirements:
+
+- AWS CLI installed
+- an authenticated AWS session able to read the target secret
+- a Secrets Manager secret whose `SecretString` is JSON with `neo4j_password` and `gemini_api_key` keys (`neo4j_user` defaults to `neo4j`)
 
 Required files:
 
@@ -219,7 +249,8 @@ Currently, this project does not deploy to a real cloud environment. Instead, it
 
 The `deploy-staging` job:
 
-- creates staging secret files
+- uses GitHub Actions OIDC to assume an AWS role
+- pulls the staging secret from AWS Secrets Manager into `infra/secrets/*.txt`
 - starts the Compose stack with `TWIN_ENV=staging`
 - verifies liveness, readiness, frontend health, and metrics
 - records evidence in workflow logs
@@ -229,11 +260,24 @@ The `deploy-staging` job:
 The `deploy-production` job:
 
 - is tied to the GitHub `production` environment
-- requires production secrets
+- uses GitHub Actions OIDC to assume an AWS role
+- pulls the production secret from AWS Secrets Manager into `infra/secrets/*.txt`
 - starts the same stack with `TWIN_ENV=production`
 - verifies final promotion checks
 
 This models the difference between staging and production even though both run as simulated delivery stages inside CI.
+
+### GitHub Actions AWS configuration
+
+The workflow now expects these GitHub Actions variables:
+
+- `AWS_REGION`
+- `STAGING_AWS_ROLE_ARN`
+- `STAGING_AWS_SECRET_ID`
+- `PROD_AWS_ROLE_ARN`
+- `PROD_AWS_SECRET_ID`
+
+The staging and production jobs use `aws-actions/configure-aws-credentials` with OIDC, then run `infra/scripts/bootstrap-secrets-from-aws.sh` to write the existing secret files consumed by Docker Compose and the API.
 
 ## Rollback Procedure
 
@@ -274,7 +318,7 @@ docker compose up --build
 | Static analysis | `.github/workflows/codeql.yml` |
 | Vulnerability scanning | `.github/workflows/trivy.yml` |
 | Environment separation | `.github/workflows/ci.yml`, `docker-compose.yml` |
-| Secret isolation | `.gitignore`, `infra/scripts/setup-local-secrets.sh` |
+| Secret isolation | `.gitignore`, `infra/scripts/setup-local-secrets.sh`, `infra/scripts/bootstrap-secrets-from-aws.sh` |
 | Health and readiness | `api/main.py`, `frontend/server.js` |
 | Metrics visibility | `api/main.py` |
 | Rollback story | this README |
