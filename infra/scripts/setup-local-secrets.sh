@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Usage:
 #   NEO4J_USER=myuser NEO4J_PASSWORD='strong-password' ./infra/scripts/setup-local-secrets.sh
 # or interactively:
@@ -34,14 +36,4 @@ if [[ -z "${GEMINI_API_KEY}" ]]; then
   GEMINI_API_KEY="replace-me"
 fi
 
-mkdir -p infra/secrets
-printf '%s/%s' "$NEO4J_USER" "$NEO4J_PASSWORD" > infra/secrets/neo4j_auth.txt
-printf '%s' "$NEO4J_USER" > infra/secrets/neo4j_user.txt
-printf '%s' "$NEO4J_PASSWORD" > infra/secrets/neo4j_password.txt
-printf '%s' "$GEMINI_API_KEY" > infra/secrets/gemini_api_key.txt
-
-echo "Wrote:"
-echo "  - infra/secrets/neo4j_auth.txt"
-echo "  - infra/secrets/neo4j_user.txt"
-echo "  - infra/secrets/neo4j_password.txt"
-echo "  - infra/secrets/gemini_api_key.txt"
+bash "$SCRIPT_DIR/write-secret-files.sh"
