@@ -17,11 +17,35 @@ class GeminiExtractionError(RuntimeError):
         RuntimeError.__init__(self, self.validation_errors[0] if self.validation_errors else self.code)
 
 
+def _is_timeout_error(error: Exception) -> bool:
+    timeout_types = (TimeoutError,)
+    try:
+        import httpx
+
+        timeout_types = timeout_types + (httpx.TimeoutException,)
+    except Exception:
+        pass
+
+    if isinstance(error, timeout_types):
+        return True
+
+    message = str(error).lower()
+    return "timed out" in message or "timeout" in message
+
+
 class GeminiGraphExtractor:
-    def __init__(self, api_key: str, model: str = "gemini-2.5-flash", max_retries: int = 1, client_factory=None) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gemini-3.1-flash-lite-preview",
+        max_retries: int = 1,
+        timeout_ms: int | None = None,
+        client_factory=None,
+    ) -> None:
         self.api_key = api_key
         self.model = model
         self.max_retries = max_retries
+        self.timeout_ms = timeout_ms
         self._client_factory = client_factory
         self._client = None
 
@@ -30,8 +54,11 @@ class GeminiGraphExtractor:
             return self._client_factory()
 
         from google import genai
+        from google.genai import types
 
-        return genai.Client(api_key=self.api_key)
+        if self.timeout_ms is None:
+            return genai.Client(api_key=self.api_key)
+        return genai.Client(api_key=self.api_key, http_options=types.HttpOptions(timeout=self.timeout_ms))
 
     @property
     def client(self):
@@ -82,7 +109,7 @@ class GeminiGraphExtractor:
                 )
             except Exception as exc:
                 last_error = GeminiExtractionError(
-                    code="gemini_request_failed",
+                    code="gemini_request_timeout" if _is_timeout_error(exc) else "gemini_request_failed",
                     chunk_index=chunk_index,
                     validation_errors=[str(exc)],
                     raw_payload=raw_payload,
