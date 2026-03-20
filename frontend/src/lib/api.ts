@@ -57,7 +57,7 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 3000
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(`${appConfig.apiBaseUrl}${path}`, {
+    const response = await fetch(`/api${path}`, {
       ...init,
       signal: controller.signal,
     });
