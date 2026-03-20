@@ -2,6 +2,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const fs = require('fs');
 const path = require('path');
+const API_BASE_URL = process.env.PUBLIC_API_BASE_URL || 'http://api:8000';
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -69,6 +70,39 @@ if (fs.existsSync(DIST_DIR)) {
   });
 }
 
+app.post('/api/ingest', async (req, res) => {
+  try {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', async () => {
+      const body = Buffer.concat(chunks);
+
+      const response = await fetch(`${API_BASE_URL}/ingest`, {
+        method: 'POST',
+        headers: {
+          'content-type': req.headers['content-type'] || '',
+        },
+        body,
+      });
+
+      const text = await response.text();
+      console.log("BACKEND RESPONSE:", text);
+      res.status(response.status);
+      res.set('content-type', response.headers.get('content-type') || 'application/json');
+      res.send(text);
+    });
+  } catch (error) {
+    res.status(502).json({
+      status: 'error',
+      error: {
+        code: 'frontend_proxy_failed',
+        message: String(error),
+      },
+    });
+  }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Frontend running on port ${PORT} in ${APP_ENV} with API ${PUBLIC_API_BASE_URL}`);
 });
+
