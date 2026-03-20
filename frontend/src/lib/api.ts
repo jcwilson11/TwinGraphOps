@@ -34,13 +34,17 @@ export class UnsupportedEndpointError extends Error {
 
 async function parseJsonSafely(response: Response) {
   const text = await response.text();
+  console.log('BACKEND RESPONSE:', text);
+
   if (!text) {
     return null;
   }
 
   try {
     return JSON.parse(text) as ApiPayload<unknown>;
-  } catch {
+  } catch (error) {
+    console.error('PARSE ERROR:', error);
+    console.error('RAW RESPONSE TEXT:', text);
     throw new ApiClientError('The API returned malformed JSON.', {
       status: response.status,
       retryable: false,
