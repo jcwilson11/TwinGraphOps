@@ -32,7 +32,7 @@ if [[ -z "$SECRET_STRING" || "$SECRET_STRING" == "None" ]]; then
   exit 1
 fi
 
-mapfile -t SECRET_VALUES < <(
+SECRET_OUTPUT="$(
   TWIN_AWS_SECRET_JSON="$SECRET_STRING" python - <<'PY'
 import json
 import os
@@ -56,7 +56,14 @@ print(read_value("neo4j_user", "NEO4J_USER", default="neo4j"))
 print(read_value("neo4j_password", "NEO4J_PASSWORD"))
 print(read_value("gemini_api_key", "GEMINI_API_KEY"))
 PY
-)
+)"
+
+SECRET_VALUES=()
+while IFS= read -r line; do
+  SECRET_VALUES+=("$line")
+done <<EOF
+$SECRET_OUTPUT
+EOF
 
 if [[ "${#SECRET_VALUES[@]}" -ne 3 ]]; then
   echo "Failed to extract the expected secret fields from '$AWS_SECRET_ID'." >&2
