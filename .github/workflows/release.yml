@@ -1,0 +1,225 @@
+name: TwinGraphOps Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      git_ref:
+        description: Git ref to release and deploy
+        required: true
+        default: main
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  PROD_AWS_SECRET_ID: ${{ vars.PROD_AWS_SECRET_ID }}
+  PROD_EC2_INSTANCE_ID: ${{ vars.PROD_EC2_INSTANCE_ID }}
+  API_ECR_REPOSITORY: ${{ vars.PROD_API_ECR_REPOSITORY || 'twingraphops-api' }}
+  FRONTEND_ECR_REPOSITORY: ${{ vars.PROD_FRONTEND_ECR_REPOSITORY || 'twingraphops-frontend' }}
+  RELEASE_REF: ${{ github.event.inputs.git_ref || github.ref_name }}
+  DEPLOY_REPO_URL: https://github.com/${{ github.repository }}.git
+
+concurrency:
+  group: twingraphops-production-release
+  cancel-in-progress: false
+
+jobs:
+  validate-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run API unit tests
+        env:
+          TWIN_ENV: ci
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r api/requirements.txt
+          python -m unittest discover -s api/tests -v
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend assets
+        run: |
+          npm --prefix frontend ci --no-audit
+          npm --prefix frontend run build
+
+  publish-images:
+    needs: validate-release
+    runs-on: ubuntu-latest
+    outputs:
+      api_image: ${{ steps.publish.outputs.api_image }}
+      frontend_image: ${{ steps.publish.outputs.frontend_image }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
+
+      - name: Validate AWS release settings
+        env:
+          AWS_ROLE_ARN: ${{ vars.PROD_AWS_ROLE_ARN }}
+        run: |
+          test -n "$AWS_REGION"
+          test -n "$AWS_ROLE_ARN"
+          test -n "$PROD_AWS_SECRET_ID"
+          test -n "$PROD_EC2_INSTANCE_ID"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.PROD_AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Ensure ECR repositories exist
+        run: |
+          ensure_repo() {
+            local repo_name="$1"
+            if ! aws ecr describe-repositories --repository-names "$repo_name" >/dev/null 2>&1; then
+              aws ecr create-repository --repository-name "$repo_name" >/dev/null
+            fi
+          }
+
+          ensure_repo "$API_ECR_REPOSITORY"
+          ensure_repo "$FRONTEND_ECR_REPOSITORY"
+
+      - name: Build and push release images
+        id: publish
+        run: |
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          API_IMAGE="${ECR_REGISTRY}/${API_ECR_REPOSITORY}:${RELEASE_REF}"
+          FRONTEND_IMAGE="${ECR_REGISTRY}/${FRONTEND_ECR_REPOSITORY}:${RELEASE_REF}"
+
+          docker build -t "$API_IMAGE" -t "${ECR_REGISTRY}/${API_ECR_REPOSITORY}:latest" ./api
+          docker build -t "$FRONTEND_IMAGE" -t "${ECR_REGISTRY}/${FRONTEND_ECR_REPOSITORY}:latest" ./frontend
+
+          docker push "$API_IMAGE"
+          docker push "${ECR_REGISTRY}/${API_ECR_REPOSITORY}:latest"
+          docker push "$FRONTEND_IMAGE"
+          docker push "${ECR_REGISTRY}/${FRONTEND_ECR_REPOSITORY}:latest"
+
+          echo "api_image=$API_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "frontend_image=$FRONTEND_IMAGE" >> "$GITHUB_OUTPUT"
+
+  deploy-production:
+    needs: publish-images
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Validate AWS deployment settings
+        env:
+          AWS_ROLE_ARN: ${{ vars.PROD_AWS_ROLE_ARN }}
+        run: |
+          test -n "$AWS_REGION"
+          test -n "$AWS_ROLE_ARN"
+          test -n "$PROD_AWS_SECRET_ID"
+          test -n "$PROD_EC2_INSTANCE_ID"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.PROD_AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Send deployment command over AWS Systems Manager
+        id: ssm
+        env:
+          API_IMAGE: ${{ needs.publish-images.outputs.api_image }}
+          FRONTEND_IMAGE: ${{ needs.publish-images.outputs.frontend_image }}
+        run: |
+          cat > /tmp/twingraphops-deploy.sh <<EOF
+          sudo bash -lc '
+          set -euo pipefail
+          APP_DIR=/opt/twingraphops/app
+
+          if [ ! -d "\$APP_DIR/.git" ]; then
+            git clone "${DEPLOY_REPO_URL}" "\$APP_DIR"
+          fi
+
+          cd "\$APP_DIR"
+          git fetch origin --tags
+          git checkout --detach "${RELEASE_REF}"
+
+          AWS_REGION="${AWS_REGION}" \
+          AWS_SECRETS_MANAGER_SECRET_ID="${PROD_AWS_SECRET_ID}" \
+          API_IMAGE="${API_IMAGE}" \
+          FRONTEND_IMAGE="${FRONTEND_IMAGE}" \
+          PUBLIC_API_BASE_URL="http://api:8000" \
+          TWIN_ENV="production" \
+          COMPOSE_PROJECT_NAME="twingraphops" \
+          bash ./infra/scripts/deploy-ec2-compose.sh
+          '
+          EOF
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          command_text = Path("/tmp/twingraphops-deploy.sh").read_text()
+          Path("/tmp/ssm-commands.json").write_text(json.dumps({"commands": [command_text]}), encoding="utf-8")
+          PY
+
+          COMMAND_ID="$(aws ssm send-command \
+            --document-name AWS-RunShellScript \
+            --instance-ids "$PROD_EC2_INSTANCE_ID" \
+            --comment "Deploy TwinGraphOps ${RELEASE_REF}" \
+            --parameters file:///tmp/ssm-commands.json \
+            --query 'Command.CommandId' \
+            --output text)"
+
+          echo "command_id=$COMMAND_ID" >> "$GITHUB_OUTPUT"
+          aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "$PROD_EC2_INSTANCE_ID"
+
+      - name: Show deployment logs
+        if: always() && steps.ssm.outputs.command_id != ''
+        run: |
+          aws ssm get-command-invocation \
+            --command-id "${{ steps.ssm.outputs.command_id }}" \
+            --instance-id "$PROD_EC2_INSTANCE_ID" \
+            --query '{Status:Status,StandardOutputContent:StandardOutputContent,StandardErrorContent:StandardErrorContent}' \
+            --output json
+
+  publish-github-release:
+    needs: deploy-production
+    runs-on: ubuntu-latest
+    if: startsWith(env.RELEASE_REF, 'v')
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_REF }}
+          name: TwinGraphOps ${{ env.RELEASE_REF }}
+          generate_release_notes: true
+          files: |
+            infra/aws/ec2-compose-stack.yml
