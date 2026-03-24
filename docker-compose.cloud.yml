@@ -2,12 +2,13 @@ services:
   neo4j:
     image: neo4j:5
     container_name: twin_neo4j
-    ports:
-      - "7474:7474"
-      - "7687:7687"
+    restart: unless-stopped
     environment:
       NEO4J_AUTH: ${NEO4J_AUTH}
       TWIN_ENV: ${TWIN_ENV:-cloud}
+    expose:
+      - "7474"
+      - "7687"
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
@@ -19,11 +20,9 @@ services:
       start_period: 20s
 
   api:
-    build: ./api
-    image: twin_api:latest
+    image: ${API_IMAGE:-twin_api:latest}
     container_name: twin_api
-    ports:
-      - "8000:8000"
+    restart: unless-stopped
     depends_on:
       neo4j:
         condition: service_healthy
@@ -37,6 +36,8 @@ services:
       GEMINI_CHUNK_OVERLAP: ${GEMINI_CHUNK_OVERLAP:-400}
       ARTIFACTS_DIR: /app/runtime/artifacts
       TWIN_ENV: ${TWIN_ENV:-cloud}
+    expose:
+      - "8000"
     volumes:
       - api_artifacts:/app/runtime/artifacts
     healthcheck:
@@ -47,17 +48,17 @@ services:
       start_period: 10s
 
   frontend:
-    build: ./frontend
-    image: twin_frontend:latest
+    image: ${FRONTEND_IMAGE:-twin_frontend:latest}
     container_name: twin_frontend
-    ports:
-      - "3000:3000"
+    restart: unless-stopped
     depends_on:
       api:
         condition: service_healthy
     environment:
-      PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-http://localhost:8000}
+      PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-http://api:8000}
       TWIN_ENV: ${TWIN_ENV:-cloud}
+    expose:
+      - "3000"
     command: node server.js
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/healthz', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1));"]
@@ -69,6 +70,7 @@ services:
   nginx:
     image: nginx:latest
     container_name: twin_nginx
+    restart: unless-stopped
     ports:
       - "80:80"
     volumes:
