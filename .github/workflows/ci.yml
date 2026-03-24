@@ -137,7 +137,10 @@ jobs:
         run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
 
   validate-staging-config-pr:
-    if: github.event_name == 'pull_request' && github.base_ref == 'dev'
+    if: |
+      github.event_name == 'pull_request' &&
+      github.base_ref == 'dev' &&
+      startsWith(github.head_ref, 'twin-')
     needs: build-test-and-smoke
     runs-on: ubuntu-latest
 
@@ -145,27 +148,13 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Prepare staging secret files
-        env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
-          AWS_ROLE_ARN: ${{ vars.STAGING_AWS_ROLE_ARN }}
-          AWS_SECRETS_MANAGER_SECRET_ID: ${{ vars.STAGING_AWS_SECRET_ID }}
+      - name: Create placeholder staging secret files for PR validation
         run: |
-          test -n "$AWS_REGION"
-          test -n "$AWS_ROLE_ARN"
-          test -n "$AWS_SECRETS_MANAGER_SECRET_ID"
-
-      - name: Configure AWS credentials (staging)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.STAGING_AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-
-      - name: Prepare staging secret files from AWS Secrets Manager
-        env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
-          AWS_SECRETS_MANAGER_SECRET_ID: ${{ vars.STAGING_AWS_SECRET_ID }}
-        run: bash ./infra/scripts/bootstrap-secrets-from-aws.sh
+          mkdir -p infra/secrets
+          printf '%s' 'neo4j/staging-pr-password' > infra/secrets/neo4j_auth.txt
+          printf '%s' 'neo4j' > infra/secrets/neo4j_user.txt
+          printf '%s' 'staging-pr-password' > infra/secrets/neo4j_password.txt
+          printf '%s' 'staging-pr-gemini-placeholder' > infra/secrets/gemini_api_key.txt
 
       - name: Validate compose config (staging PR)
         env:
@@ -230,7 +219,10 @@ jobs:
         run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
 
   validate-production-config-pr:
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    if: |
+      github.event_name == 'pull_request' &&
+      github.base_ref == 'main' &&
+      github.head_ref == 'dev'
     needs: build-test-and-smoke
     runs-on: ubuntu-latest
 
@@ -238,27 +230,13 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Prepare production secret files
-        env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
-          AWS_ROLE_ARN: ${{ vars.PROD_AWS_ROLE_ARN }}
-          AWS_SECRETS_MANAGER_SECRET_ID: ${{ vars.PROD_AWS_SECRET_ID }}
+      - name: Create placeholder production secret files for PR validation
         run: |
-          test -n "$AWS_REGION"
-          test -n "$AWS_ROLE_ARN"
-          test -n "$AWS_SECRETS_MANAGER_SECRET_ID"
-
-      - name: Configure AWS credentials (production)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.PROD_AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-
-      - name: Prepare production secret files from AWS Secrets Manager
-        env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
-          AWS_SECRETS_MANAGER_SECRET_ID: ${{ vars.PROD_AWS_SECRET_ID }}
-        run: bash ./infra/scripts/bootstrap-secrets-from-aws.sh
+          mkdir -p infra/secrets
+          printf '%s' 'neo4j/production-pr-password' > infra/secrets/neo4j_auth.txt
+          printf '%s' 'neo4j' > infra/secrets/neo4j_user.txt
+          printf '%s' 'production-pr-password' > infra/secrets/neo4j_password.txt
+          printf '%s' 'production-pr-gemini-placeholder' > infra/secrets/gemini_api_key.txt
 
       - name: Validate compose config (production PR)
         env:
