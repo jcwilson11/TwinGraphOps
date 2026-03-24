@@ -207,7 +207,9 @@ jobs:
   publish-github-release:
     needs: deploy-production
     runs-on: ubuntu-latest
-    if: startsWith(env.RELEASE_REF, 'v')
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && startsWith(inputs.git_ref, 'v'))
 
     steps:
       - name: Checkout repo
