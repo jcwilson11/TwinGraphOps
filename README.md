@@ -209,6 +209,13 @@ curl http://localhost:3000/healthz
 
 The ingest pipeline accepts structured `.md` or `.txt` system manuals, chunks them, sends each chunk to Gemini for graph extraction, validates the JSON, writes the merged graph to Neo4j, and stores artifacts under `runtime/artifacts/`.
 
+For larger manuals on a student/free-tier Gemini quota, the default runtime tuning now favors fewer timeouts without exploding request count:
+
+- `GEMINI_MAX_CHARS=2400`
+- `GEMINI_CHUNK_OVERLAP=200`
+- `GEMINI_MAX_RETRIES=2`
+- `GEMINI_RETRY_BACKOFF_SECONDS=1.0`
+
 Example:
 
 ```bash
