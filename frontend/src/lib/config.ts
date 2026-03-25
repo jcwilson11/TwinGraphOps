@@ -6,7 +6,7 @@ function readNumber(value: number | string | undefined, fallback: number) {
 }
 
 export const appConfig = {
-  apiBaseUrl: runtimeConfig.API_BASE_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000',
+  apiBaseUrl: 'http://localhost:8000',
   maxUploadBytes:
     readNumber(runtimeConfig.MAX_UPLOAD_MB || import.meta.env.VITE_MAX_UPLOAD_MB, 10) * 1024 * 1024,
   processingTimeoutMs: readNumber(
