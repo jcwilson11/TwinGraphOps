@@ -29,6 +29,11 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v aws >/dev/null 2>&1; then
+  echo "AWS CLI is required on the EC2 host." >&2
+  exit 1
+fi
+
 if ! docker compose version >/dev/null 2>&1; then
   echo "Docker Compose v2 is required on the EC2 host." >&2
   exit 1
@@ -78,6 +83,24 @@ PY
 } > "$ENV_FILE"
 
 rm -f "$TMP_EXPORTS"
+
+login_to_ecr_if_needed() {
+  local image="$1"
+  local registry=""
+
+  if [[ "$image" == *"/"* ]]; then
+    registry="${image%%/*}"
+  fi
+
+  if [[ "$registry" == *.amazonaws.com ]]; then
+    aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$registry"
+  fi
+}
+
+login_to_ecr_if_needed "$API_IMAGE"
+if [[ "$FRONTEND_IMAGE" != "$API_IMAGE" ]]; then
+  login_to_ecr_if_needed "$FRONTEND_IMAGE"
+fi
 
 docker pull "$API_IMAGE"
 docker pull "$FRONTEND_IMAGE"
