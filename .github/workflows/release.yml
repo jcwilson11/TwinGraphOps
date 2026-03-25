@@ -31,12 +31,18 @@ concurrency:
 jobs:
   validate-release:
     runs-on: ubuntu-latest
+    outputs:
+      release_sha: ${{ steps.resolve_release_sha.outputs.release_sha }}
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           ref: ${{ env.RELEASE_REF }}
+
+      - name: Resolve release commit
+        id: resolve_release_sha
+        run: echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -69,6 +75,7 @@ jobs:
     outputs:
       api_image: ${{ steps.publish.outputs.api_image }}
       frontend_image: ${{ steps.publish.outputs.frontend_image }}
+      release_sha: ${{ needs.validate-release.outputs.release_sha }}
 
     steps:
       - name: Checkout repo
@@ -151,6 +158,7 @@ jobs:
         env:
           API_IMAGE: ${{ needs.publish-images.outputs.api_image }}
           FRONTEND_IMAGE: ${{ needs.publish-images.outputs.frontend_image }}
+          RELEASE_SHA: ${{ needs.publish-images.outputs.release_sha }}
         run: |
           cat > /tmp/twingraphops-deploy.sh <<EOF
           sudo bash -lc '
@@ -163,7 +171,7 @@ jobs:
 
           cd "\$APP_DIR"
           git fetch origin --tags
-          git checkout --detach "${RELEASE_REF}"
+          git checkout --detach "${RELEASE_SHA}"
 
           AWS_REGION="${AWS_REGION}" \
           AWS_SECRETS_MANAGER_SECRET_ID="${PROD_AWS_SECRET_ID}" \

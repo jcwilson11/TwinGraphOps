@@ -42,6 +42,7 @@ Important notes:
 - `t3.medium` is the default because Neo4j is more comfortable there than on a tiny instance
 - the stack only opens port `80`
 - the instance reads the secret directly, so the EC2 role only needs read access to that one secret plus ECR read access
+- the EC2 bootstrap installs Docker from Amazon Linux 2023 and installs Docker Compose as a CLI plugin
 
 ## 3. Configure GitHub Actions
 
