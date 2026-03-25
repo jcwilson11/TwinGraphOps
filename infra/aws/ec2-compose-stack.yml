@@ -1,0 +1,121 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: TwinGraphOps single-host EC2 stack for Docker Compose production deployments.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: twingraphops
+    AllowedPattern: '[a-zA-Z][-a-zA-Z0-9]*'
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC for the EC2 host.
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet with outbound internet access for ECR, GitHub, and AWS APIs.
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues:
+      - t3.micro
+      - t2.micro
+  RootVolumeSize:
+    Type: Number
+    Default: 30
+    MinValue: 20
+    MaxValue: 200
+  AllowedHttpCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR allowed to reach the app over HTTP.
+  AwsSecretArn:
+    Type: String
+    Description: ARN of the AWS Secrets Manager secret that stores neo4j and Gemini credentials.
+
+Resources:
+  TwinGraphOpsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Access for the TwinGraphOps production host.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref AllowedHttpCidr
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-sg'
+
+  TwinGraphOpsInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+      Policies:
+        - PolicyName: !Sub '${ProjectName}-secrets-read'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref AwsSecretArn
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-role'
+
+  TwinGraphOpsInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref TwinGraphOpsInstanceRole
+
+  TwinGraphOpsInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      IamInstanceProfile: !Ref TwinGraphOpsInstanceProfile
+      ImageId: '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
+      InstanceType: !Ref InstanceType
+      SecurityGroupIds:
+        - !Ref TwinGraphOpsSecurityGroup
+      SubnetId: !Ref SubnetId
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: !Ref RootVolumeSize
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-prod'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          dnf update -y
+          dnf install -y docker docker-compose-plugin git curl
+          systemctl enable --now docker
+          usermod -aG docker ec2-user
+          mkdir -p /opt/${ProjectName}/app
+          chown -R ec2-user:ec2-user /opt/${ProjectName}
+
+Outputs:
+  InstanceId:
+    Value: !Ref TwinGraphOpsInstance
+  PublicDnsName:
+    Value: !GetAtt TwinGraphOpsInstance.PublicDnsName
+  PublicIp:
+    Value: !GetAtt TwinGraphOpsInstance.PublicIp
+  SecurityGroupId:
+    Value: !Ref TwinGraphOpsSecurityGroup

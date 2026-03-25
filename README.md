@@ -1,6 +1,6 @@
 # TwinGraphOps
 
-TwinGraphOps is a doc-driven digital twin demo that uses a FastAPI backend, a Neo4j graph store, and an Express frontend. This repo is structured so that the microservice application is intentionally simple, but the delivery workflow demonstrates automated build, test, security scanning, staged promotion, health checks, and rollback planning.
+TwinGraphOps is a doc-driven digital twin demo that uses a FastAPI backend, a Neo4j graph store, and an Express frontend. This repo is structured so that the microservice application is intentionally simple, but the delivery workflow demonstrates automated build, test, security scanning, staged promotion, health checks, rollback planning, and a real AWS release path built from the same Docker Compose topology used for localhost development.
 
 ## Project Overview
 
@@ -58,14 +58,14 @@ GitHub branch protection is designed to mark the CI, Trivy, Gitleaks, and CodeQL
 
 ## Environment Model
 
-Currently, the project uses logical environments rather than real cloud infrastructure. If time permits, we'd like to add a cloud deployment to demonstrate the same promotion logic in a real runtime.
+The project uses the same container topology across local development, CI validation, and AWS production. Local and CI still use Docker Compose directly, while production runs the cloud compose variant on EC2 and is deployed from tagged GitHub releases.
 
 | Environment | Purpose | How it is represented |
 | --- | --- | --- |
 | `local` | developer workstation | `docker compose up --build` |
 | `ci` | automated verification | GitHub Actions smoke test job |
 | `staging` | pre-release promotion | `deploy-staging` workflow job |
-| `production` | gated final promotion | `deploy-production` workflow job |
+| `production` | real cloud runtime | EC2 + Docker Compose + ECR + SSM |
 
 The `TWIN_ENV` variable is injected into the services so environment state is visible in health responses and metrics.
 
@@ -98,6 +98,11 @@ This repo demonstrates the infrastructure-as-code mindset through committed deli
 - `.github/workflows/codeql.yml`: static analysis
 
 These files are part of the system architecture because they define how software moves from code to a validated deployment state.
+
+Additional AWS infrastructure is captured in:
+
+- `infra/aws/ec2-compose-stack.yml`: single-host EC2 stack with SSM and ECR access
+- `.github/workflows/release.yml`: tag-driven ECR publish, EC2 deployment, and GitHub release
 
 ## Health, Readiness, And Monitoring
 
@@ -245,7 +250,14 @@ The tests cover:
 
 ## Deployment And Promotion 
 
-Currently, this project does not deploy to a real cloud environment. Instead, it demonstrates promotion logic through GitHub Actions jobs. If time permits, we would like to add a cloud deployment to demonstrate the same promotion logic in a real runtime.
+TwinGraphOps now has a real production deployment path that builds directly on the localhost container model:
+
+- localhost and CI keep using the existing Compose stack for fast validation
+- tagged releases build immutable `api` and `frontend` images and push them to Amazon ECR
+- AWS Systems Manager tells the production EC2 host to pull the tagged images and restart `docker-compose.cloud.yml`
+- the EC2 host loads Neo4j and Gemini credentials from AWS Secrets Manager at deploy time
+
+The production runtime is intentionally simple and budget-aware: one EC2 instance runs `nginx`, `frontend`, `api`, and `neo4j`, which keeps the first cloud release inside a small-credit footprint while still being a real AWS deployment.
 
 ### Staging-like promotion
 
@@ -257,29 +269,39 @@ The `deploy-staging` job:
 - verifies liveness, readiness, frontend health, and metrics
 - records evidence in workflow logs
 
-### Production-like promotion
+### Production release
 
-The `deploy-production` job:
+The `TwinGraphOps Release` workflow is triggered by a version tag such as `v1.0.0` and:
 
 - is tied to the GitHub `production` environment
 - uses GitHub Actions OIDC to assume an AWS role
-- pulls the production secret from AWS Secrets Manager into `infra/secrets/*.txt`
-- starts the same stack with `TWIN_ENV=production`
-- verifies final promotion checks
-
-This models the difference between staging and production even though both run as simulated delivery stages inside CI.
+- runs API tests and builds the frontend
+- builds release images and pushes them to Amazon ECR
+- deploys the tagged ref to the EC2 production host with AWS Systems Manager
+- verifies final health, readiness, and metrics checks on the instance
+- publishes the GitHub Release after deployment succeeds
 
 ### GitHub Actions AWS configuration
 
-The workflow now expects these GitHub Actions variables:
+The CI and release workflows expect these GitHub Actions variables:
 
 - `AWS_REGION`
 - `STAGING_AWS_ROLE_ARN`
 - `STAGING_AWS_SECRET_ID`
 - `PROD_AWS_ROLE_ARN`
 - `PROD_AWS_SECRET_ID`
+- `PROD_EC2_INSTANCE_ID`
+
+Optional release variables:
+
+- `PROD_API_ECR_REPOSITORY` default: `twingraphops-api`
+- `PROD_FRONTEND_ECR_REPOSITORY` default: `twingraphops-frontend`
 
 The staging and production jobs use `aws-actions/configure-aws-credentials` with OIDC, then run `infra/scripts/bootstrap-secrets-from-aws.sh` to write the existing secret files consumed by Docker Compose and the API.
+
+The tagged release workflow uses the same OIDC model, but deploys the production host with `infra/scripts/deploy-ec2-compose.sh` and the `docker-compose.cloud.yml` topology.
+
+For the AWS bootstrap steps and CloudFormation template, see `infra/aws/README.md`.
 
 ## Rollback Procedure
 
