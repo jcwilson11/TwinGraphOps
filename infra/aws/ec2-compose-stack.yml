@@ -104,9 +104,23 @@ Resources:
           #!/bin/bash
           set -euxo pipefail
           dnf update -y
-          dnf install -y docker docker-compose-plugin git curl
+          dnf install -y docker git
           systemctl enable --now docker
           usermod -aG docker ec2-user
+          mkdir -p /usr/local/lib/docker/cli-plugins
+          ARCH="$(uname -m)"
+          if [ "$ARCH" = "x86_64" ]; then
+            COMPOSE_ARCH="x86_64"
+          elif [ "$ARCH" = "aarch64" ]; then
+            COMPOSE_ARCH="aarch64"
+          else
+            echo "Unsupported architecture for Docker Compose: $ARCH" >&2
+            exit 1
+          fi
+          curl -SL "https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-${COMPOSE_ARCH}" \
+            -o /usr/local/lib/docker/cli-plugins/docker-compose
+          chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          docker compose version
           mkdir -p /opt/${ProjectName}/app
           chown -R ec2-user:ec2-user /opt/${ProjectName}
 
