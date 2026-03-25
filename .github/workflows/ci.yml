@@ -90,9 +90,7 @@ jobs:
           rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
 
   validate-staging-config:
-    if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/dev') ||
-      (github.event_name == 'pull_request' && github.base_ref == 'dev')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     needs: build-test-and-smoke
     runs-on: ubuntu-latest
     environment: staging
@@ -138,10 +136,43 @@ jobs:
         if: always()
         run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
 
-  validate-production-config:
+  validate-staging-config-pr:
     if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && github.base_ref == 'main')
+      github.event_name == 'pull_request' &&
+      github.base_ref == 'dev' &&
+      startsWith(github.head_ref, 'twin-')
+    needs: build-test-and-smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Create placeholder staging secret files for PR validation
+        run: |
+          mkdir -p infra/secrets
+          printf '%s' 'neo4j/staging-pr-password' > infra/secrets/neo4j_auth.txt
+          printf '%s' 'neo4j' > infra/secrets/neo4j_user.txt
+          printf '%s' 'staging-pr-password' > infra/secrets/neo4j_password.txt
+          printf '%s' 'staging-pr-gemini-placeholder' > infra/secrets/gemini_api_key.txt
+
+      - name: Validate compose config (staging PR)
+        env:
+          TWIN_ENV: staging
+        run: docker compose config > /tmp/docker-compose.staging.rendered.yml
+
+      - name: Upload staging config artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-compose-staging
+          path: /tmp/docker-compose.staging.rendered.yml
+
+      - name: Cleanup staging secret files
+        if: always()
+        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
+
+  validate-production-config:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build-test-and-smoke
     runs-on: ubuntu-latest
     environment: production
@@ -173,6 +204,41 @@ jobs:
         run: bash ./infra/scripts/bootstrap-secrets-from-aws.sh
 
       - name: Validate compose config (production)
+        env:
+          TWIN_ENV: production
+        run: docker compose config > /tmp/docker-compose.production.rendered.yml
+
+      - name: Upload production config artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-compose-production
+          path: /tmp/docker-compose.production.rendered.yml
+
+      - name: Cleanup production secret files
+        if: always()
+        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
+
+  validate-production-config-pr:
+    if: |
+      github.event_name == 'pull_request' &&
+      github.base_ref == 'main' &&
+      github.head_ref == 'dev'
+    needs: build-test-and-smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Create placeholder production secret files for PR validation
+        run: |
+          mkdir -p infra/secrets
+          printf '%s' 'neo4j/production-pr-password' > infra/secrets/neo4j_auth.txt
+          printf '%s' 'neo4j' > infra/secrets/neo4j_user.txt
+          printf '%s' 'production-pr-password' > infra/secrets/neo4j_password.txt
+          printf '%s' 'production-pr-gemini-placeholder' > infra/secrets/gemini_api_key.txt
+
+      - name: Validate compose config (production PR)
         env:
           TWIN_ENV: production
         run: docker compose config > /tmp/docker-compose.production.rendered.yml
