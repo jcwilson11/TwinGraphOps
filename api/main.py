@@ -157,7 +157,8 @@ def get_gemini_client() -> GeminiGraphExtractor:
     return GeminiGraphExtractor(
         api_key=_load_secret("GEMINI_API_KEY", required=True),
         model=os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite-preview"),
-        max_retries=1,
+        max_retries=int(os.getenv("GEMINI_MAX_RETRIES", "2")),
+        backoff_seconds=float(os.getenv("GEMINI_RETRY_BACKOFF_SECONDS", "1.0")),
     )
 
 
@@ -398,8 +399,8 @@ def run_ingestion_pipeline(filename: str, text: str, replace_existing: bool) -> 
 
     chunks = chunk_text(
         text,
-        max_chars=int(os.getenv("GEMINI_MAX_CHARS", "3000")),
-        overlap=int(os.getenv("GEMINI_CHUNK_OVERLAP", "400")),
+        max_chars=int(os.getenv("GEMINI_MAX_CHARS", "2400")),
+        overlap=int(os.getenv("GEMINI_CHUNK_OVERLAP", "200")),
     )
     if not chunks:
         raise ApiError(400, "empty_upload", "Uploaded file is empty.")
