@@ -157,3 +157,23 @@ class TwinGraphOpsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertEqual(response.json()["error"]["code"], "gemini_extraction_failed")
         persist_graph.assert_not_called()
+
+    def test_ingest_surfaces_gemini_timeout_errors(self):
+        error = GeminiExtractionError(
+            code="gemini_request_timeout",
+            chunk_index=1,
+            validation_errors=["The Gemini request timed out."],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            main, "get_gemini_client", return_value=FakeExtractor(error=error)
+        ), patch.object(main, "persist_graph_to_store") as persist_graph, patch.object(
+            main, "get_artifacts_root", return_value=Path(tmpdir)
+        ):
+            response = self.client.post(
+                "/ingest",
+                files={"file": ("manual.md", io.BytesIO(b"Example manual text"), "text/markdown")},
+            )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["error"]["code"], "gemini_request_timeout")
+        persist_graph.assert_not_called()

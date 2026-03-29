@@ -159,6 +159,7 @@ def get_gemini_client() -> GeminiGraphExtractor:
         model=os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite-preview"),
         max_retries=int(os.getenv("GEMINI_MAX_RETRIES", "2")),
         backoff_seconds=float(os.getenv("GEMINI_RETRY_BACKOFF_SECONDS", "1.0")),
+        timeout_ms=int(os.getenv("GEMINI_TIMEOUT_MS", "30000")),
     )
 
 
@@ -312,10 +313,22 @@ def persist_graph_to_store(graph: MergedGraph, source: str, ingestion_id: str, r
 
 def fetch_graph_from_store() -> MergedGraph:
     with get_driver().session() as session:
+        component_exists = session.run(
+            """
+            MATCH (n)
+            WHERE 'Component' IN labels(n)
+            RETURN 1 AS found
+            LIMIT 1
+            """
+        ).single()
+        if component_exists is None:
+            return MergedGraph()
+
         node_records = list(
             session.run(
                 """
-                MATCH (c:Component)
+                MATCH (c)
+                WHERE 'Component' IN labels(c)
                 RETURN c.id AS id,
                        c.name AS name,
                        c.type AS type,
@@ -336,7 +349,10 @@ def fetch_graph_from_store() -> MergedGraph:
         edge_records = list(
             session.run(
                 """
-                MATCH (a:Component)-[r:DEPENDS_ON]->(b:Component)
+                MATCH (a)-[r]->(b)
+                WHERE 'Component' IN labels(a)
+                  AND 'Component' IN labels(b)
+                  AND type(r) = 'DEPENDS_ON'
                 RETURN a.id AS source,
                        b.id AS target,
                        r.relation AS relation,
