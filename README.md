@@ -209,6 +209,8 @@ curl http://localhost:3000/healthz
 
 The ingest pipeline accepts structured `.md` or `.txt` system manuals, chunks them, sends each chunk to Gemini for graph extraction, validates the JSON, writes the merged graph to Neo4j, and stores artifacts under `runtime/artifacts/`.
 
+By default, each Gemini request is bounded by `GEMINI_TIMEOUT_MS=30000` inside the API so a blocked upstream call fails closed instead of leaving `/ingest` pending indefinitely.
+
 For larger manuals on a student/free-tier Gemini quota, the default runtime tuning now favors fewer timeouts without exploding request count:
 
 - `GEMINI_MAX_CHARS=2400`

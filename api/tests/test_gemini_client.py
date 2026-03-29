@@ -58,3 +58,11 @@ class GeminiClientTests(unittest.TestCase):
                 extractor.extract_chunk("chunk", "prompt", 3)
         self.assertEqual(context.exception.chunk_index, 3)
         self.assertIn("unknown node", context.exception.validation_errors[0])
+
+    def test_extract_chunk_marks_timeout_failures(self):
+        extractor = GeminiGraphExtractor(api_key="test-key", max_retries=0)
+        with patch.object(extractor, "_generate_payload", side_effect=TimeoutError("request timed out")):
+            with self.assertRaises(GeminiExtractionError) as context:
+                extractor.extract_chunk("chunk", "prompt", 4)
+        self.assertEqual(context.exception.code, "gemini_request_timeout")
+        self.assertEqual(context.exception.chunk_index, 4)
