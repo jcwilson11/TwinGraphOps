@@ -12,8 +12,7 @@ FROM node:22-alpine3.22
 
 WORKDIR /app
 
-RUN apk upgrade --no-cache \
-    && npm install -g npm@latest
+RUN apk upgrade --no-cache
 
 COPY package*.json ./
 RUN npm ci --omit=dev --no-audit \

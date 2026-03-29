@@ -35,8 +35,10 @@ services:
       NEO4J_PASSWORD_FILE: /run/secrets/neo4j_password
       GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.1-flash-lite-preview}
-      GEMINI_MAX_CHARS: ${GEMINI_MAX_CHARS:-3000}
-      GEMINI_CHUNK_OVERLAP: ${GEMINI_CHUNK_OVERLAP:-400}
+      GEMINI_MAX_CHARS: ${GEMINI_MAX_CHARS:-2400}
+      GEMINI_CHUNK_OVERLAP: ${GEMINI_CHUNK_OVERLAP:-200}
+      GEMINI_MAX_RETRIES: ${GEMINI_MAX_RETRIES:-2}
+      GEMINI_RETRY_BACKOFF_SECONDS: ${GEMINI_RETRY_BACKOFF_SECONDS:-1.0}
       ARTIFACTS_DIR: /app/runtime/artifacts
       TWIN_ENV: ${TWIN_ENV:-local}
     volumes:
