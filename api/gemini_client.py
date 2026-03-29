@@ -1,4 +1,5 @@
 import json
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -39,12 +40,14 @@ class GeminiGraphExtractor:
         api_key: str,
         model: str = "gemini-3.1-flash-lite-preview",
         max_retries: int = 1,
+        backoff_seconds: float = 1.0,
         timeout_ms: int | None = None,
         client_factory=None,
     ) -> None:
         self.api_key = api_key
         self.model = model
         self.max_retries = max_retries
+        self.backoff_seconds = backoff_seconds
         self.timeout_ms = timeout_ms
         self._client_factory = client_factory
         self._client = None
@@ -93,7 +96,7 @@ class GeminiGraphExtractor:
     def extract_chunk(self, chunk_text: str, prompt: str, chunk_index: int) -> tuple[ChunkGraph, Any]:
         del chunk_text
         last_error: GeminiExtractionError | None = None
-        for _ in range(self.max_retries + 1):
+        for attempt in range(self.max_retries + 1):
             raw_payload = None
             try:
                 response = self._generate_payload(prompt)
@@ -114,6 +117,9 @@ class GeminiGraphExtractor:
                     validation_errors=[str(exc)],
                     raw_payload=raw_payload,
                 )
+
+            if attempt < self.max_retries and self.backoff_seconds > 0:
+                time.sleep(self.backoff_seconds * (attempt + 1))
 
         if last_error is None:
             raise GeminiExtractionError(
