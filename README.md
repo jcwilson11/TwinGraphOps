@@ -211,6 +211,13 @@ The ingest pipeline accepts structured `.md` or `.txt` system manuals, chunks th
 
 By default, each Gemini request is bounded by `GEMINI_TIMEOUT_MS=30000` inside the API so a blocked upstream call fails closed instead of leaving `/ingest` pending indefinitely.
 
+For larger manuals on a student/free-tier Gemini quota, the default runtime tuning now favors fewer timeouts without exploding request count:
+
+- `GEMINI_MAX_CHARS=2400`
+- `GEMINI_CHUNK_OVERLAP=200`
+- `GEMINI_MAX_RETRIES=2`
+- `GEMINI_RETRY_BACKOFF_SECONDS=1.0`
+
 Example:
 
 ```bash
