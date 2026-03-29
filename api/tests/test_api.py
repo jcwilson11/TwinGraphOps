@@ -74,7 +74,7 @@ class TwinGraphOpsApiTests(unittest.TestCase):
             'twingraphops_http_requests_total{method="GET",path="/health",status="200"} 1.0',
             metrics_payload,
         )
-        self.assertIn('twingraphops_environment_info{environment="local"} 1.0', metrics_payload)
+        self.assertIn(f'twingraphops_environment_info{{environment="{main.get_environment()}"}} 1.0', metrics_payload)
 
     def test_ready_failure_updates_dependency_and_error_metrics(self):
         with patch.object(main, "get_driver", side_effect=RuntimeError("Neo4j unavailable")):
