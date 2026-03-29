@@ -1,6 +1,6 @@
 # TwinGraphOps
 
-TwinGraphOps is a doc-driven digital twin demo that uses a FastAPI backend, a Neo4j graph store, and an Express frontend. This repo is structured so that the microservice application is intentionally simple, but the delivery workflow demonstrates automated build, test, security scanning, staged promotion, health checks, rollback planning, and a real AWS release path built from the same Docker Compose topology used for localhost development.
+TwinGraphOps is a doc-driven digital twin demo that uses a FastAPI backend, a Neo4j graph store, an Express frontend, and a Grafana/Prometheus observability stack. This repo is structured so that the microservice application is intentionally simple, but the delivery workflow demonstrates automated build, test, security scanning, staged promotion, health checks, rollback planning, and a real AWS release path built from the same Docker Compose topology used for localhost development.
 
 ## Project Overview
 
@@ -21,6 +21,8 @@ The runtime stack in this repo is:
 - `frontend`: Express UI for the upload/demo flow
 - `api`: FastAPI service for Gemini-backed graph ingestion and query endpoints
 - `neo4j`: graph database used as the digital twin store
+- `prometheus`: metrics collector and alert rule evaluator
+- `grafana`: dashboard UI for platform, ingest, and risk metrics
 
 ```mermaid
 flowchart LR
@@ -113,7 +115,7 @@ Operational visibility is intentionally lightweight but explicit.
 - `GET /health`: liveness check
 - `GET /ready`: readiness check against Neo4j
 - `GET /health/neo4j`: dependency-specific health
-- `GET /metrics`: simple Prometheus-style metrics payload
+- `GET /metrics`: Prometheus metrics payload with HTTP, dependency, Gemini, ingest, and graph summary metrics
 - `POST /ingest`: upload a `.md` or `.txt` manual and extract a graph with Gemini
 - `GET /graph`: return the active graph
 - `GET /impact?component_id=<id>`: reverse dependency blast radius
@@ -123,15 +125,30 @@ Operational visibility is intentionally lightweight but explicit.
 ### Frontend endpoint
 
 - `GET /healthz`: UI/service health response
+- `GET /metrics`: frontend Prometheus metrics payload
 
 ### What the metrics show
 
-The API exposes simple counters and gauges
+The API exposes Prometheus counters, histograms, and gauges for:
 
-- total request count
-- per-endpoint request count
-- process uptime
-- current environment label
+- HTTP request totals, status codes, latency, and in-flight requests
+- Neo4j dependency health and health-check latency
+- Gemini request attempts, retries, timeouts, failures, and latency
+- ingestion document counts, chunk counts, and failure counts
+- graph node totals, edge totals, average risk, and risk bucket counts
+
+The frontend exposes:
+
+- request totals by route and status
+- static asset response counts
+- rate-limit hits
+- uptime and environment labels
+
+Grafana is provisioned with starter dashboards for:
+
+- platform overview
+- ingestion pipeline
+- twin risk summary
 
 ### Logs
 
@@ -203,6 +220,12 @@ curl http://localhost:8000/health
 curl http://localhost:8000/ready
 curl http://localhost:8000/metrics
 curl http://localhost:3000/healthz
+curl http://localhost:3000/metrics
+
+Open:
+
+- Grafana: `http://localhost:3001`
+- Prometheus: `http://localhost:9090`
 ```
 
 ### 4. Upload a manual for extraction
@@ -243,6 +266,7 @@ Run locally:
 ```bash
 python -m pip install -r api/requirements.txt
 python -m unittest discover -s api/tests -v
+npm --prefix frontend test
 ```
 
 The tests cover:

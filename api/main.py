@@ -4,13 +4,13 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Lock
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse
 from neo4j import GraphDatabase
+from threading import Lock
 
 from gemini_client import GeminiExtractionError, GeminiGraphExtractor
 from graph_pipeline import (
@@ -24,6 +24,7 @@ from graph_pipeline import (
     merge_chunk_graphs,
 )
 from models import ChunkGraph, GraphEdge, GraphNode, MergedGraph, model_dump_compat
+from observability import Observability, normalize_http_path
 
 app = FastAPI(title="TwinGraphOps API")
 app.add_middleware(
@@ -37,11 +38,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-APP_START_TIME = time.time()
-METRICS_LOCK = Lock()
-REQUEST_METRICS = {"total": 0, "by_path": {}}
 DRIVER_LOCK = Lock()
 DRIVER = None
+OBSERVABILITY = Observability()
 
 
 class ApiError(Exception):
@@ -54,7 +53,10 @@ class ApiError(Exception):
 
 
 @app.exception_handler(ApiError)
-def handle_api_error(_, exc: ApiError) -> JSONResponse:
+def handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
+    OBSERVABILITY.record_api_error(exc.code)
+    if request.url.path == "/ingest":
+        OBSERVABILITY.record_ingest_failure(exc.code)
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -100,41 +102,6 @@ def get_environment() -> str:
     return os.getenv("TWIN_ENV", "local")
 
 
-def record_request(path: str) -> None:
-    with METRICS_LOCK:
-        REQUEST_METRICS["total"] += 1
-        REQUEST_METRICS["by_path"][path] = REQUEST_METRICS["by_path"].get(path, 0) + 1
-
-
-def render_metrics() -> str:
-    with METRICS_LOCK:
-        total_requests = REQUEST_METRICS["total"]
-        by_path = dict(REQUEST_METRICS["by_path"])
-
-    uptime_seconds = max(time.time() - APP_START_TIME, 0)
-    lines = [
-        "# HELP twingraphops_requests_total Total HTTP requests served by the API.",
-        "# TYPE twingraphops_requests_total counter",
-        f"twingraphops_requests_total {total_requests}",
-        "# HELP twingraphops_endpoint_requests_total Requests served by endpoint path.",
-        "# TYPE twingraphops_endpoint_requests_total counter",
-    ]
-    for path, count in sorted(by_path.items()):
-        safe_path = path.replace('"', '\\"')
-        lines.append(f'twingraphops_endpoint_requests_total{{path="{safe_path}"}} {count}')
-    lines.extend(
-        [
-            "# HELP twingraphops_uptime_seconds Seconds since the API process started.",
-            "# TYPE twingraphops_uptime_seconds gauge",
-            f"twingraphops_uptime_seconds {uptime_seconds:.0f}",
-            "# HELP twingraphops_environment_info Current application environment.",
-            "# TYPE twingraphops_environment_info gauge",
-            f'twingraphops_environment_info{{environment="{get_environment()}"}} 1',
-        ]
-    )
-    return "\n".join(lines) + "\n"
-
-
 def get_driver():
     global DRIVER
     if DRIVER is not None:
@@ -168,13 +135,17 @@ def get_artifacts_root() -> Path:
 
 
 def check_neo4j() -> tuple[bool, str | None]:
+    start_time = time.perf_counter()
     try:
         with get_driver().session() as session:
             result = session.run("RETURN 1 AS ok").single()
             if result and result["ok"] == 1:
+                OBSERVABILITY.observe_neo4j("healthcheck", True, time.perf_counter() - start_time)
                 return True, None
     except Exception as exc:  # pragma: no cover
+        OBSERVABILITY.observe_neo4j("healthcheck", False, time.perf_counter() - start_time)
         return False, str(exc)
+    OBSERVABILITY.observe_neo4j("healthcheck", False, time.perf_counter() - start_time)
     return False, "Neo4j returned an unexpected response."
 
 
@@ -307,8 +278,14 @@ def _write_graph_tx(tx, graph: MergedGraph, source: str, ingestion_id: str, repl
 
 
 def persist_graph_to_store(graph: MergedGraph, source: str, ingestion_id: str, replace_existing: bool) -> None:
-    with get_driver().session() as session:
-        session.execute_write(_write_graph_tx, graph, source, ingestion_id, replace_existing)
+    try:
+        with get_driver().session() as session:
+            session.execute_write(_write_graph_tx, graph, source, ingestion_id, replace_existing)
+    except Exception:
+        OBSERVABILITY.record_graph_persist(False)
+        raise
+    OBSERVABILITY.record_graph_persist(True)
+    OBSERVABILITY.update_graph_summary(graph)
 
 
 def fetch_graph_from_store() -> MergedGraph:
@@ -322,7 +299,9 @@ def fetch_graph_from_store() -> MergedGraph:
             """
         ).single()
         if component_exists is None:
-            return MergedGraph()
+            empty_graph = MergedGraph()
+            OBSERVABILITY.update_graph_summary(empty_graph)
+            return empty_graph
 
         node_records = list(
             session.run(
@@ -389,12 +368,16 @@ def fetch_graph_from_store() -> MergedGraph:
         )
         for record in edge_records
     ]
-    return MergedGraph(nodes=nodes, edges=edges)
+    graph = MergedGraph(nodes=nodes, edges=edges)
+    OBSERVABILITY.update_graph_summary(graph)
+    return graph
 
 
 def seed_demo_graph() -> MergedGraph:
     graph = compute_graph_metrics(build_demo_graph())
     persist_graph_to_store(graph, source="demo", ingestion_id="demo-seed", replace_existing=True)
+    OBSERVABILITY.record_graph_counts(nodes_created=len(graph.nodes), edges_created=len(graph.edges))
+    OBSERVABILITY.update_graph_summary(graph)
     return graph
 
 
@@ -420,6 +403,7 @@ def run_ingestion_pipeline(filename: str, text: str, replace_existing: bool) -> 
     )
     if not chunks:
         raise ApiError(400, "empty_upload", "Uploaded file is empty.")
+    OBSERVABILITY.record_ingest_document(source="user", chunk_count=len(chunks))
 
     _write_text(artifact_dir / "source_document.md", text)
 
@@ -430,9 +414,16 @@ def run_ingestion_pipeline(filename: str, text: str, replace_existing: bool) -> 
         _write_text(artifact_dir / f"{chunk_name}.txt", chunk)
         _write_text(artifact_dir / f"{chunk_name}_prompt.txt", prompt)
 
+        gemini_started_at = time.perf_counter()
         try:
             graph, payload = extractor.extract_chunk(chunk_text=chunk, prompt=prompt, chunk_index=index)
         except GeminiExtractionError as exc:
+            OBSERVABILITY.observe_gemini(
+                attempts=extractor.last_attempts,
+                duration_seconds=time.perf_counter() - gemini_started_at,
+                success=False,
+                code=exc.code,
+            )
             if exc.raw_payload is not None:
                 _write_json(artifact_dir / f"{chunk_name}_response.json", exc.raw_payload)
             _write_json(
@@ -450,6 +441,12 @@ def run_ingestion_pipeline(filename: str, text: str, replace_existing: bool) -> 
                 str(exc),
                 {"chunk_index": exc.chunk_index, "validation_errors": exc.validation_errors},
             ) from exc
+        OBSERVABILITY.observe_gemini(
+            attempts=extractor.last_attempts,
+            duration_seconds=time.perf_counter() - gemini_started_at,
+            success=True,
+            code="ok",
+        )
 
         _write_json(artifact_dir / f"{chunk_name}_response.json", payload)
         _write_json(
@@ -464,6 +461,8 @@ def run_ingestion_pipeline(filename: str, text: str, replace_existing: bool) -> 
         raise ApiError(422, "graph_merge_failed", str(exc), {"validation_errors": exc.validation_errors}) from exc
 
     persist_graph_to_store(merged_graph, source="user", ingestion_id=ingestion_id, replace_existing=replace_existing)
+    OBSERVABILITY.record_graph_counts(nodes_created=len(merged_graph.nodes), edges_created=len(merged_graph.edges))
+    OBSERVABILITY.update_graph_summary(merged_graph)
     _write_json(artifact_dir / "merged_graph.json", model_dump_compat(merged_graph))
     _write_json(artifact_dir / "neo4j_payload.json", model_dump_compat(merged_graph))
     _write_json(artifact_dir / "risk_summary.json", _risk_summary(merged_graph))
@@ -487,9 +486,32 @@ def shutdown_driver() -> None:
         DRIVER = None
 
 
+@app.middleware("http")
+async def instrument_requests(request: Request, call_next):
+    started_at = time.perf_counter()
+    status_code = 500
+    OBSERVABILITY.http_in_flight_requests.inc()
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    except Exception:
+        OBSERVABILITY.record_api_error("internal_server_error")
+        raise
+    finally:
+        route = request.scope.get("route")
+        path = normalize_http_path(request.url.path, getattr(route, "path", None))
+        OBSERVABILITY.record_http_request(
+            method=request.method,
+            path=path,
+            status_code=status_code,
+            duration_seconds=time.perf_counter() - started_at,
+        )
+        OBSERVABILITY.http_in_flight_requests.dec()
+
+
 @app.get("/")
 def root():
-    record_request("/")
     return {
         "service": "twin_api",
         "status": "ok",
@@ -503,37 +525,35 @@ def root():
 
 @app.get("/health")
 def health():
-    record_request("/health")
     return {"status": "ok", "environment": get_environment()}
 
 
 @app.get("/ready")
 def ready():
-    record_request("/ready")
     healthy, reason = check_neo4j()
     if not healthy:
+        OBSERVABILITY.record_api_error("neo4j_unavailable")
         raise HTTPException(status_code=503, detail={"status": "not_ready", "reason": reason})
     return {"status": "ready", "dependencies": {"neo4j": "ok"}, "environment": get_environment()}
 
 
 @app.get("/health/neo4j")
 def health_neo4j():
-    record_request("/health/neo4j")
     healthy, reason = check_neo4j()
     if not healthy:
+        OBSERVABILITY.record_api_error("neo4j_unavailable")
         raise HTTPException(status_code=503, detail={"neo4j": "bad", "reason": reason})
     return {"neo4j": "ok"}
 
 
-@app.get("/metrics", response_class=PlainTextResponse)
+@app.get("/metrics")
 def metrics():
-    record_request("/metrics")
-    return render_metrics()
+    payload, content_type = OBSERVABILITY.render_metrics(get_environment())
+    return Response(content=payload, media_type=content_type)
 
 
 @app.post("/seed")
 def seed():
-    record_request("/seed")
     graph = seed_demo_graph()
     return success_response(
         {
@@ -547,13 +567,11 @@ def seed():
 
 @app.get("/graph")
 def get_graph():
-    record_request("/graph")
     return success_response(_serialize_graph(ensure_active_graph()))
 
 
 @app.get("/impact")
 def impact(component_id: str):
-    record_request("/impact")
     graph = ensure_active_graph()
     if not get_node_by_id(graph, component_id):
         raise ApiError(404, "component_not_found", f"Component '{component_id}' was not found.")
@@ -569,7 +587,6 @@ def impact(component_id: str):
 
 @app.get("/risk")
 def risk(component_id: str):
-    record_request("/risk")
     graph = ensure_active_graph()
     node = get_node_by_id(graph, component_id)
     if not node:
@@ -588,6 +605,5 @@ def risk(component_id: str):
 
 @app.post("/ingest")
 def ingest(file: UploadFile = File(...), replace_existing: bool = Form(True)):
-    record_request("/ingest")
     filename, text = read_upload(file)
     return success_response(run_ingestion_pipeline(filename=filename, text=text, replace_existing=replace_existing))

@@ -5,3 +5,4 @@ google-genai
 networkx
 python-multipart
 httpx
+prometheus-client

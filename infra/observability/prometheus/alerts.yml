@@ -1,0 +1,65 @@
+groups:
+  - name: twingraphops-platform
+    rules:
+      - alert: TwinGraphOpsApiDown
+        expr: up{job="twingraphops-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: TwinGraphOps API is down
+          description: Prometheus has been unable to scrape the API for at least 1 minute.
+
+      - alert: TwinGraphOpsFrontendDown
+        expr: up{job="twingraphops-frontend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: TwinGraphOps frontend is down
+          description: Prometheus has been unable to scrape the frontend for at least 1 minute.
+
+      - alert: TwinGraphOpsNeo4jUnavailable
+        expr: max_over_time(twingraphops_dependency_neo4j_up[2m]) == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Neo4j dependency is unavailable
+          description: The API has reported Neo4j unavailable for the last 2 minutes.
+
+      - alert: TwinGraphOpsHighApiErrorRate
+        expr: |
+          (
+            sum(rate(twingraphops_http_requests_total{status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(twingraphops_http_requests_total[5m])), 1)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Elevated API 5xx rate
+          description: More than 5% of API requests have been failing with 5xx responses over the last 5 minutes.
+
+      - alert: TwinGraphOpsHighIngestFailureRate
+        expr: sum(rate(twingraphops_ingest_failures_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Ingestion failures detected
+          description: The ingestion pipeline has reported failures during the last 10 minutes.
+
+      - alert: TwinGraphOpsHighLatencyP95
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(twingraphops_http_request_duration_seconds_bucket[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: API p95 latency is elevated
+          description: API p95 latency has remained above 1 second for 10 minutes.

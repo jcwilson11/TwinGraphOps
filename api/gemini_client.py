@@ -51,6 +51,7 @@ class GeminiGraphExtractor:
         self.timeout_ms = timeout_ms
         self._client_factory = client_factory
         self._client = None
+        self.last_attempts = 0
 
     def _build_client(self):
         if self._client_factory is not None:
@@ -96,7 +97,9 @@ class GeminiGraphExtractor:
     def extract_chunk(self, chunk_text: str, prompt: str, chunk_index: int) -> tuple[ChunkGraph, Any]:
         del chunk_text
         last_error: GeminiExtractionError | None = None
+        self.last_attempts = 0
         for attempt in range(self.max_retries + 1):
+            self.last_attempts += 1
             raw_payload = None
             try:
                 response = self._generate_payload(prompt)
