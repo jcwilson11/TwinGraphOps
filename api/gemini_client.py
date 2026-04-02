@@ -96,10 +96,10 @@ class GeminiGraphExtractor:
 
     def extract_chunk(self, chunk_text: str, prompt: str, chunk_index: int) -> tuple[ChunkGraph, Any]:
         del chunk_text
-        last_error: GeminiExtractionError | None = None
         self.last_attempts = 0
+        last_error: GeminiExtractionError | None = None
         for attempt in range(self.max_retries + 1):
-            self.last_attempts += 1
+            self.last_attempts = attempt + 1
             raw_payload = None
             try:
                 response = self._generate_payload(prompt)
