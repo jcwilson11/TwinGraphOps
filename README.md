@@ -40,19 +40,21 @@ The repository uses GitHub Actions to model a deployment pipeline:
 
 1. Developer pushes code or opens a pull request.
 2. CI runs Python unit tests for the API.
-3. CI builds Docker images with `docker compose build`.
-4. CI starts the full stack with ephemeral secret files.
-5. CI verifies:
+3. CI performs a local Docker Compose build and smoke test for source validation.
+4. Pushes to `main` and `dev` also build `api` and `frontend` once, publish them to Amazon ECR with immutable `sha-<commit>` tags, and capture the resulting digest refs.
+5. CI smoke-tests the exact published digest refs with ephemeral secret files.
+6. CI verifies:
    - API liveness: `/health`
    - API readiness: `/ready`
    - API metrics: `/metrics`
    - frontend health: `/healthz`
-6. Security workflows run separately for:
+7. Security workflows run separately for:
    - secret scanning with Gitleaks
    - static analysis with CodeQL
-   - filesystem and image vulnerability scanning with Trivy
-7. Pushes to `dev` run a **staging-like promotion** job.
-8. Pushes to `main` run a **production-like promotion** job gated by the GitHub `production` environment.
+   - filesystem vulnerability scanning with Trivy
+8. Promotable branch pushes run Trivy image scans against the exact published digest refs.
+9. Pushes to `dev` run a **staging-like promotion** job using those same digest refs.
+10. Pushes to `main` run a **production-like promotion** job gated by the GitHub `production` environment, again using those same digest refs.
 
 GitHub branch protection is designed to mark the CI, Trivy, Gitleaks, and CodeQL workflows as required checks so the separate security workflows act as promotion gates.
 
@@ -63,7 +65,7 @@ The project uses the same container topology across local development, CI valida
 | Environment | Purpose | How it is represented |
 | --- | --- | --- |
 | `local` | developer workstation | `docker compose up --build` |
-| `ci` | automated verification | GitHub Actions smoke test job |
+| `ci` | automated verification | GitHub Actions local validation plus exact-image smoke test |
 | `staging` | pre-release promotion | `deploy-staging` workflow job |
 | `production` | real cloud runtime | EC2 + Docker Compose + ECR + SSM |
 
@@ -77,7 +79,8 @@ This project treats security as part of delivery, adopting the DevSecOps mindset
 | --- | --- | --- |
 | Secret detection | `secret-scan.yml` with Gitleaks | Prevent accidental credential commits |
 | Static analysis | `codeql.yml` | Detect common code-level security issues |
-| Dependency and image scanning | `trivy.yml` | Detect vulnerable packages and container layers |
+| Filesystem vulnerability scanning | `trivy.yml` | Detect vulnerable packages in the source tree |
+| Published image scanning | `.github/workflows/ci.yml` with Trivy | Scan the exact digest refs promoted by CI |
 | Secret isolation | `infra/secrets/*.txt` ignored in git | Keep operational credentials out of version control |
 | Environment-based secrets | AWS Secrets Manager plus GitHub Actions OIDC | Keep GitHub out of long-lived secret storage while separating environments |
 
@@ -102,7 +105,7 @@ These files are part of the system architecture because they define how software
 Additional AWS infrastructure is captured in:
 
 - `infra/aws/ec2-compose-stack.yml`: single-host EC2 stack with SSM and ECR access
-- `.github/workflows/release.yml`: tag-driven ECR publish, EC2 deployment, and GitHub release
+- `.github/workflows/release.yml`: tag-driven digest resolution, EC2 deployment, and GitHub release
 
 ## Health, Readiness, And Monitoring
 
@@ -260,8 +263,9 @@ The tests cover:
 TwinGraphOps now has a real production deployment path that builds directly on the localhost container model:
 
 - localhost and CI keep using the existing Compose stack for fast validation
-- tagged releases build immutable `api` and `frontend` images and push them to Amazon ECR
-- AWS Systems Manager tells the production EC2 host to pull the tagged images and restart `docker-compose.cloud.yml`
+- pushes to `main` and `dev` publish immutable `sha-<commit>` images to Amazon ECR after local validation
+- tagged releases resolve those previously published digest refs instead of rebuilding from source
+- AWS Systems Manager tells the production EC2 host to pull those exact digest refs and restart `docker-compose.cloud.yml`
 - the EC2 host loads Neo4j and Gemini credentials from AWS Secrets Manager at deploy time
 
 The production runtime is intentionally simple and budget-aware: one EC2 instance runs `nginx`, `frontend`, `api`, and `neo4j`, which keeps the first cloud release inside a small-credit footprint while still being a real AWS deployment.
@@ -283,7 +287,8 @@ The `TwinGraphOps Release` workflow is triggered by a version tag such as `v1.0.
 - is tied to the GitHub `production` environment
 - uses GitHub Actions OIDC to assume an AWS role
 - runs API tests and builds the frontend
-- builds release images and pushes them to Amazon ECR
+- resolves previously published `sha-<commit>` images from Amazon ECR into immutable digest refs
+- optionally aliases those same digests to the release tag and `latest`
 - deploys the tagged ref to the EC2 production host with AWS Systems Manager
 - verifies final health, readiness, and metrics checks on the instance
 - publishes the GitHub Release after deployment succeeds
@@ -306,7 +311,11 @@ Optional release variables:
 
 The staging and production jobs use `aws-actions/configure-aws-credentials` with OIDC, then run `infra/scripts/bootstrap-secrets-from-aws.sh` to write the existing secret files consumed by Docker Compose and the API.
 
-The tagged release workflow uses the same OIDC model, but deploys the production host with `infra/scripts/deploy-ec2-compose.sh` and the `docker-compose.cloud.yml` topology.
+The promotable branch CI jobs also publish immutable `sha-<commit>` tags into the existing ECR repos and record the resulting digest refs in an `image-manifest` artifact.
+
+Because those promotable images are published into the existing production ECR repositories, the CI publish path uses `PROD_AWS_ROLE_ARN` for ECR write access, and the staging role must be able to pull from those repositories during staging simulation.
+
+The tagged release workflow uses the same OIDC model, resolves those previously published digest refs from ECR, and deploys the production host with `infra/scripts/deploy-ec2-compose.sh` and the `docker-compose.cloud.yml` topology.
 
 For the AWS bootstrap steps and CloudFormation template, see `infra/aws/README.md`.
 
