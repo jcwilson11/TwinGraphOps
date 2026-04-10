@@ -69,20 +69,15 @@ jobs:
           npm --prefix frontend ci --no-audit
           npm --prefix frontend run build
 
-  publish-images:
+  resolve-release-images:
     needs: validate-release
     runs-on: ubuntu-latest
     outputs:
-      api_image: ${{ steps.publish.outputs.api_image }}
-      frontend_image: ${{ steps.publish.outputs.frontend_image }}
+      api_image: ${{ steps.resolve.outputs.api_image }}
+      frontend_image: ${{ steps.resolve.outputs.frontend_image }}
       release_sha: ${{ needs.validate-release.outputs.release_sha }}
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ env.RELEASE_REF }}
-
       - name: Validate AWS release settings
         env:
           AWS_ROLE_ARN: ${{ vars.PROD_AWS_ROLE_ARN }}
@@ -91,6 +86,8 @@ jobs:
           test -n "$AWS_ROLE_ARN"
           test -n "$PROD_AWS_SECRET_ID"
           test -n "$PROD_EC2_INSTANCE_ID"
+          test -n "$API_ECR_REPOSITORY"
+          test -n "$FRONTEND_ECR_REPOSITORY"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -98,42 +95,78 @@ jobs:
           role-to-assume: ${{ vars.PROD_AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Log in to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Ensure ECR repositories exist
-        run: |
-          ensure_repo() {
-            local repo_name="$1"
-            if ! aws ecr describe-repositories --repository-names "$repo_name" >/dev/null 2>&1; then
-              aws ecr create-repository --repository-name "$repo_name" >/dev/null
-            fi
-          }
-
-          ensure_repo "$API_ECR_REPOSITORY"
-          ensure_repo "$FRONTEND_ECR_REPOSITORY"
-
-      - name: Build and push release images
-        id: publish
+      - name: Resolve release image digests
+        id: resolve
+        env:
+          RELEASE_SHA: ${{ needs.validate-release.outputs.release_sha }}
         run: |
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          API_IMAGE="${ECR_REGISTRY}/${API_ECR_REPOSITORY}:${RELEASE_REF}"
-          FRONTEND_IMAGE="${ECR_REGISTRY}/${FRONTEND_ECR_REPOSITORY}:${RELEASE_REF}"
+          IMAGE_TAG="sha-${RELEASE_SHA}"
 
-          docker build -t "$API_IMAGE" -t "${ECR_REGISTRY}/${API_ECR_REPOSITORY}:latest" ./api
-          docker build -t "$FRONTEND_IMAGE" -t "${ECR_REGISTRY}/${FRONTEND_ECR_REPOSITORY}:latest" ./frontend
+          resolve_digest() {
+            local repository_name="$1"
+            aws ecr describe-images \
+              --repository-name "$repository_name" \
+              --image-ids imageTag="$IMAGE_TAG" \
+              --query 'imageDetails[0].imageDigest' \
+              --output text 2>/dev/null || true
+          }
 
-          docker push "$API_IMAGE"
-          docker push "${ECR_REGISTRY}/${API_ECR_REPOSITORY}:latest"
-          docker push "$FRONTEND_IMAGE"
-          docker push "${ECR_REGISTRY}/${FRONTEND_ECR_REPOSITORY}:latest"
+          API_DIGEST="$(resolve_digest "$API_ECR_REPOSITORY")"
+          FRONTEND_DIGEST="$(resolve_digest "$FRONTEND_ECR_REPOSITORY")"
 
-          echo "api_image=$API_IMAGE" >> "$GITHUB_OUTPUT"
-          echo "frontend_image=$FRONTEND_IMAGE" >> "$GITHUB_OUTPUT"
+          if [[ -z "$API_DIGEST" || "$API_DIGEST" == "None" ]]; then
+            echo "No promotable API image found for commit $RELEASE_SHA (tag $IMAGE_TAG)." >&2
+            exit 1
+          fi
+
+          if [[ -z "$FRONTEND_DIGEST" || "$FRONTEND_DIGEST" == "None" ]]; then
+            echo "No promotable frontend image found for commit $RELEASE_SHA (tag $IMAGE_TAG)." >&2
+            exit 1
+          fi
+
+          echo "api_image=${ECR_REGISTRY}/${API_ECR_REPOSITORY}@${API_DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "frontend_image=${ECR_REGISTRY}/${FRONTEND_ECR_REPOSITORY}@${FRONTEND_DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Resolved release images for commit $RELEASE_SHA using tag $IMAGE_TAG."
+
+      - name: Tag release aliases in ECR
+        if: startsWith(env.RELEASE_REF, 'v')
+        env:
+          RELEASE_SHA: ${{ needs.validate-release.outputs.release_sha }}
+        run: |
+          IMAGE_TAG="sha-${RELEASE_SHA}"
+
+          tag_existing_image() {
+            local repository_name="$1"
+            local source_tag="$2"
+            local target_tag="$3"
+            local image_manifest=""
+
+            image_manifest="$(aws ecr batch-get-image \
+              --repository-name "$repository_name" \
+              --image-ids imageTag="$source_tag" \
+              --query 'images[0].imageManifest' \
+              --output text)"
+
+            if [[ -z "$image_manifest" || "$image_manifest" == "None" ]]; then
+              echo "Unable to resolve manifest for $repository_name:$source_tag" >&2
+              exit 1
+            fi
+
+            aws ecr put-image \
+              --repository-name "$repository_name" \
+              --image-tag "$target_tag" \
+              --image-manifest "$image_manifest" >/dev/null
+          }
+
+          tag_existing_image "$API_ECR_REPOSITORY" "$IMAGE_TAG" "$RELEASE_REF"
+          tag_existing_image "$FRONTEND_ECR_REPOSITORY" "$IMAGE_TAG" "$RELEASE_REF"
+          tag_existing_image "$API_ECR_REPOSITORY" "$IMAGE_TAG" "latest"
+          tag_existing_image "$FRONTEND_ECR_REPOSITORY" "$IMAGE_TAG" "latest"
 
   deploy-production:
-    needs: publish-images
+    needs: resolve-release-images
     runs-on: ubuntu-latest
     environment: production
 
@@ -156,9 +189,9 @@ jobs:
       - name: Send deployment command over AWS Systems Manager
         id: ssm
         env:
-          API_IMAGE: ${{ needs.publish-images.outputs.api_image }}
-          FRONTEND_IMAGE: ${{ needs.publish-images.outputs.frontend_image }}
-          RELEASE_SHA: ${{ needs.publish-images.outputs.release_sha }}
+          API_IMAGE: ${{ needs.resolve-release-images.outputs.api_image }}
+          FRONTEND_IMAGE: ${{ needs.resolve-release-images.outputs.frontend_image }}
+          RELEASE_SHA: ${{ needs.resolve-release-images.outputs.release_sha }}
         run: |
           cat > /tmp/twingraphops-deploy.sh <<EOF
           sudo bash -lc '
