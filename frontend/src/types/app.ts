@@ -1,4 +1,4 @@
-import type { IngestResponse } from './api';
+import type { IngestResponse, ProcessingStatus } from './api';
 
 export type UploadPhase =
   | 'idle'
@@ -91,7 +91,9 @@ export interface UploadState {
   selectedFile: File | null;
   error: string | null;
   statusMessage: string;
+  ingestionId: string | null;
   ingestion: IngestResponse | null;
+  processingStatus: ProcessingStatus | null;
   startedAt: number | null;
   completedAt: number | null;
   retryCount: number;

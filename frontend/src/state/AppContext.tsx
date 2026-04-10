@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { adaptGraph } from '../lib/adapters';
-import { ApiClientError, getGraph, uploadDocument } from '../lib/api';
+import { ApiClientError, getGraph, getProcessingStatus, uploadDocument } from '../lib/api';
 import { appConfig } from '../lib/config';
 import type { GraphState, UploadState } from '../types/app';
 
@@ -23,7 +23,9 @@ const initialUploadState: UploadState = {
   selectedFile: null,
   error: null,
   statusMessage: 'Upload a .md or .txt file to build the graph.',
+  ingestionId: null,
   ingestion: null,
+  processingStatus: null,
   startedAt: null,
   completedAt: null,
   retryCount: 0,
@@ -106,7 +108,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       selectedFile: file,
       error: null,
       statusMessage: `Ready to analyze ${file.name}.`,
+      ingestionId: null,
       ingestion: null,
+      processingStatus: null,
       startedAt: null,
       completedAt: null,
       retryCount: 0,
@@ -178,6 +182,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const task = (async () => {
       let processingPhaseTimer = 0;
+      const ingestionId = crypto.randomUUID();
+      let keepPolling = true;
+
+      const pollProcessing = async () => {
+        while (keepPolling) {
+          try {
+            const processingStatus = await getProcessingStatus(ingestionId);
+            setUpload((current) =>
+              current.ingestionId !== ingestionId
+                ? current
+                : {
+                    ...current,
+                    processingStatus,
+                    statusMessage: processingStatus.latest_event || current.statusMessage,
+                  }
+            );
+          } catch {
+            // Polling is best-effort so the main upload flow can continue even if status refresh fails.
+          }
+
+          if (!keepPolling) {
+            break;
+          }
+
+          await new Promise((resolve) => window.setTimeout(resolve, 800));
+        }
+      };
 
       try {
         setUpload((current) => ({
@@ -185,9 +216,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
           phase: 'uploading',
           error: null,
           statusMessage: `Uploading ${selectedFile.name}...`,
+          ingestionId,
           startedAt: Date.now(),
           completedAt: null,
+          processingStatus: {
+            ingestion_id: ingestionId,
+            state: 'pending',
+            filename: selectedFile.name,
+            chunks_total: null,
+            current_chunk: null,
+            started_at: null,
+            completed_at: null,
+            latest_event: `Uploading ${selectedFile.name}...`,
+            events: [],
+          },
         }));
+
+        const pollingTask = pollProcessing();
 
         processingPhaseTimer = window.setTimeout(() => {
           setUpload((current) =>
@@ -201,13 +246,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
           );
         }, 900);
 
-        const ingestion = await uploadDocument(selectedFile, true, appConfig.processingTimeoutMs);
+        const ingestion = await uploadDocument(selectedFile, true, appConfig.processingTimeoutMs, ingestionId);
+        const latestProcessingStatus = await getProcessingStatus(ingestionId).catch(() => null);
 
         setUpload((current) => ({
           ...current,
           ingestion,
           phase: 'processing',
-          statusMessage: 'Loading the generated graph workspace...',
+          statusMessage: latestProcessingStatus?.latest_event || 'Loading the generated graph workspace...',
+          processingStatus: latestProcessingStatus || current.processingStatus,
         }));
 
         const graphPayload = await getGraph();
@@ -223,26 +270,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setUpload((current) => ({
           ...current,
           ingestion,
+          ingestionId,
           phase: adaptedGraph.nodes.length === 0 ? 'empty-graph' : 'success',
           error: null,
           statusMessage:
-            adaptedGraph.nodes.length === 0
+            latestProcessingStatus?.latest_event ||
+            (adaptedGraph.nodes.length === 0
               ? 'Processing completed, but the active graph is empty.'
-              : 'TwinGraphOps finished processing your document.',
+              : 'TwinGraphOps finished processing your document.'),
+          processingStatus:
+            latestProcessingStatus ??
+            current.processingStatus,
           completedAt: Date.now(),
         }));
+        keepPolling = false;
+        await pollingTask;
       } catch (error) {
+        keepPolling = false;
+        const latestProcessingStatus = await getProcessingStatus(ingestionId).catch(() => null);
         const message = toFriendlyMessage(error);
         setUpload((current) => ({
           ...current,
           phase: 'retry',
           error: message,
           statusMessage: message,
+          processingStatus: latestProcessingStatus || current.processingStatus,
           completedAt: Date.now(),
           retryCount: current.retryCount + 1,
         }));
         throw error;
       } finally {
+        keepPolling = false;
         window.clearTimeout(processingPhaseTimer);
         processingPromiseRef.current = null;
       }

@@ -4,6 +4,7 @@ import os
 import time
 import traceback
 import uuid
+from collections import deque
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,6 +56,157 @@ if not LOGGER.handlers:
     LOGGER.addHandler(handler)
 
 
+def _to_event_message(event: str, fields: dict[str, Any]) -> str:
+    if event == "ingest_started":
+        return f"Started processing {fields.get('filename', 'document')}."
+    if event == "ingest_chunking_completed":
+        return f"Split the document into {fields.get('chunks_total', 0)} chunk(s)."
+    if event == "ingest_chunk_started":
+        return f"Processing chunk {fields.get('chunk_index', '?')}."
+    if event == "ingest_chunk_succeeded":
+        return (
+            f"Chunk {fields.get('chunk_index', '?')} produced "
+            f"{fields.get('node_count', 0)} node(s) and {fields.get('edge_count', 0)} edge(s)."
+        )
+    if event == "ingest_chunk_failed":
+        return f"Chunk {fields.get('chunk_index', '?')} failed: {fields.get('error_message', 'unknown error')}."
+    if event == "graph_merge_completed":
+        return (
+            f"Merged graph with {fields.get('nodes_created', 0)} node(s) and "
+            f"{fields.get('edges_created', 0)} edge(s)."
+        )
+    if event == "graph_persisted":
+        return "Saved the graph to Neo4j."
+    if event == "graph_persist_failed":
+        return f"Failed to save the graph: {fields.get('error_message', 'unknown error')}."
+    if event == "ingest_completed":
+        return "Processing completed successfully."
+    if event == "ingest_configuration_failed":
+        return f"Configuration failed: {fields.get('error_message', 'unknown error')}."
+    if event == "graph_merge_failed":
+        return f"Graph merge failed: {fields.get('error_message', 'unknown error')}."
+    return event.replace("_", " ").capitalize()
+
+
+class IngestionEventStore:
+    def __init__(self, max_events: int = 50) -> None:
+        self._lock = Lock()
+        self._max_events = max_events
+        self._entries: dict[str, dict[str, Any]] = {}
+
+    def register(self, ingestion_id: str, filename: str | None = None) -> None:
+        with self._lock:
+            entry = self._entries.setdefault(
+                ingestion_id,
+                {
+                    "ingestion_id": ingestion_id,
+                    "state": "pending",
+                    "filename": filename,
+                    "chunks_total": None,
+                    "current_chunk": None,
+                    "started_at": None,
+                    "completed_at": None,
+                    "latest_event": "Waiting for ingestion to start.",
+                    "events": deque(maxlen=self._max_events),
+                },
+            )
+            if filename:
+                entry["filename"] = filename
+
+    def append(self, payload: dict[str, Any]) -> None:
+        ingestion_id = str(payload.get("ingestion_id") or "").strip()
+        if not ingestion_id:
+            return
+
+        event = str(payload.get("event") or "")
+        fields = {
+            key: value
+            for key, value in payload.items()
+            if key
+            not in {"timestamp", "level", "service", "environment", "event", "request_id", "ingestion_id", "traceback"}
+        }
+        message = _to_event_message(event, fields)
+
+        with self._lock:
+            entry = self._entries.setdefault(
+                ingestion_id,
+                {
+                    "ingestion_id": ingestion_id,
+                    "state": "pending",
+                    "filename": fields.get("filename"),
+                    "chunks_total": None,
+                    "current_chunk": None,
+                    "started_at": None,
+                    "completed_at": None,
+                    "latest_event": "Waiting for ingestion to start.",
+                    "events": deque(maxlen=self._max_events),
+                },
+            )
+
+            if fields.get("filename"):
+                entry["filename"] = fields["filename"]
+            if fields.get("chunks_total") is not None:
+                entry["chunks_total"] = fields["chunks_total"]
+            if fields.get("chunk_index") is not None:
+                entry["current_chunk"] = fields["chunk_index"]
+
+            if event == "ingest_started":
+                entry["state"] = "running"
+                entry["started_at"] = payload.get("timestamp")
+            elif event == "ingest_completed":
+                entry["state"] = "succeeded"
+                entry["completed_at"] = payload.get("timestamp")
+            elif event in {
+                "ingest_chunk_failed",
+                "graph_merge_failed",
+                "graph_persist_failed",
+                "ingest_configuration_failed",
+            }:
+                entry["state"] = "failed"
+                entry["completed_at"] = payload.get("timestamp")
+
+            entry["latest_event"] = message
+            entry["events"].append(
+                {
+                    "timestamp": payload.get("timestamp"),
+                    "level": payload.get("level"),
+                    "event": event,
+                    "message": message,
+                    "chunk_index": fields.get("chunk_index"),
+                }
+            )
+
+    def get(self, ingestion_id: str) -> dict[str, Any]:
+        with self._lock:
+            entry = self._entries.get(ingestion_id)
+            if not entry:
+                return {
+                    "ingestion_id": ingestion_id,
+                    "state": "pending",
+                    "filename": None,
+                    "chunks_total": None,
+                    "current_chunk": None,
+                    "started_at": None,
+                    "completed_at": None,
+                    "latest_event": "Waiting for ingestion to start.",
+                    "events": [],
+                }
+            return {
+                "ingestion_id": entry["ingestion_id"],
+                "state": entry["state"],
+                "filename": entry["filename"],
+                "chunks_total": entry["chunks_total"],
+                "current_chunk": entry["current_chunk"],
+                "started_at": entry["started_at"],
+                "completed_at": entry["completed_at"],
+                "latest_event": entry["latest_event"],
+                "events": list(entry["events"]),
+            }
+
+
+INGESTION_EVENTS = IngestionEventStore()
+
+
 def log_event(level: str, event: str, **fields: Any) -> None:
     payload = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -65,6 +217,7 @@ def log_event(level: str, event: str, **fields: Any) -> None:
         "request_id": REQUEST_ID_CTX.get(),
         **fields,
     }
+    INGESTION_EVENTS.append(payload)
     getattr(LOGGER, level.lower(), LOGGER.info)(json.dumps(payload, default=str))
 
 
@@ -491,9 +644,10 @@ def ensure_active_graph() -> MergedGraph:
     return seed_demo_graph()
 
 
-def run_ingestion_pipeline(filename: str, text: str, replace_existing: bool) -> dict[str, Any]:
-    ingestion_id = str(uuid.uuid4())
+def run_ingestion_pipeline(filename: str, text: str, replace_existing: bool, ingestion_id: str | None = None) -> dict[str, Any]:
+    ingestion_id = ingestion_id or str(uuid.uuid4())
     artifact_dir = get_artifacts_root() / ingestion_id
+    INGESTION_EVENTS.register(ingestion_id, filename)
 
     log_event(
         "info",
@@ -775,6 +929,11 @@ def metrics():
     return Response(content=payload, media_type=content_type)
 
 
+@app.get("/ingest/{ingestion_id}/events")
+def get_ingestion_events(ingestion_id: str):
+    return success_response(INGESTION_EVENTS.get(ingestion_id))
+
+
 @app.post("/seed")
 def seed():
     graph = seed_demo_graph()
@@ -866,13 +1025,23 @@ def risk(component_id: str):
 
 
 @app.post("/ingest")
-def ingest(file: UploadFile = File(...), replace_existing: bool = Form(True)):
+def ingest(file: UploadFile = File(...), replace_existing: bool = Form(True), ingestion_id: str | None = Form(None)):
+    if ingestion_id:
+        INGESTION_EVENTS.register(ingestion_id)
     filename, text = read_upload(file)
     log_event(
         "info",
         "ingest_endpoint_called",
+        ingestion_id=ingestion_id,
         filename=filename,
         replace_existing=replace_existing,
         payload_chars=len(text),
     )
-    return success_response(run_ingestion_pipeline(filename=filename, text=text, replace_existing=replace_existing))
+    return success_response(
+        run_ingestion_pipeline(
+            filename=filename,
+            text=text,
+            replace_existing=replace_existing,
+            ingestion_id=ingestion_id,
+        )
+    )

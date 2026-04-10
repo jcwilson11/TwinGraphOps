@@ -16,7 +16,7 @@ const PUBLIC_MAX_UPLOAD_MB = Number(
 );
 
 const PUBLIC_PROCESSING_TIMEOUT_MS = Number(
-  process.env.PUBLIC_PROCESSING_TIMEOUT_MS || process.env.VITE_PROCESSING_TIMEOUT_MS || 90000
+  process.env.PUBLIC_PROCESSING_TIMEOUT_MS || process.env.VITE_PROCESSING_TIMEOUT_MS || 300000
 );
 
 const STATIC_RATE_LIMIT_WINDOW_MS = Number(process.env.STATIC_RATE_LIMIT_WINDOW_MS || 60_000);
@@ -211,6 +211,10 @@ function createApp() {
         },
       });
     }
+  });
+
+  app.get('/api/ingest/:ingestionId/events', (req, res) => {
+    proxyJson(req, res, 'GET', `/ingest/${encodeURIComponent(req.params.ingestionId)}/events`);
   });
 
   app.get('/api/graph', (req, res) => {
