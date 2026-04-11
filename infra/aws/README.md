@@ -89,6 +89,8 @@ The `TwinGraphOps Release` workflow will then:
 
 If there is no prior successful production release yet, the workflow does not invent a rollback target. It fails clearly so the operator can investigate the initial release problem.
 
+For operator-driven recovery after a “successful” deploy, use the `TwinGraphOps Manual Rollback` workflow in GitHub Actions and provide a previously successful production release tag such as `v1.2.3`. The workflow resolves that tag’s stored `production-release-metadata.json` asset, validates the digest refs, and redeploys those exact images through the same EC2 compose path.
+
 ## 5. Verify the deployment
 
 Use the EC2 public DNS name or public IP from the CloudFormation outputs:

@@ -107,6 +107,59 @@ class ReleaseRollbackTests(unittest.TestCase):
 
         self.assertIsNone(candidate)
 
+    def test_select_release_by_tag_returns_matching_release_asset(self):
+        releases = [
+            {
+                "tag_name": "v1.2.1",
+                "draft": False,
+                "published_at": "2026-04-10T22:00:00Z",
+                "assets": [
+                    {
+                        "name": "production-release-metadata.json",
+                        "url": "https://api.github.com/assets/121",
+                    }
+                ],
+            },
+            {
+                "tag_name": "v1.2.0",
+                "draft": False,
+                "published_at": "2026-04-09T22:00:00Z",
+                "assets": [
+                    {
+                        "name": "production-release-metadata.json",
+                        "url": "https://api.github.com/assets/120",
+                    }
+                ],
+            },
+        ]
+
+        candidate = release_rollback.select_release_by_tag(
+            releases,
+            release_tag="v1.2.0",
+            asset_name="production-release-metadata.json",
+        )
+
+        self.assertEqual(candidate["release_tag"], "v1.2.0")
+        self.assertEqual(candidate["asset_url"], "https://api.github.com/assets/120")
+
+    def test_select_release_by_tag_returns_none_when_requested_tag_has_no_metadata(self):
+        releases = [
+            {
+                "tag_name": "v1.2.1",
+                "draft": False,
+                "published_at": "2026-04-10T22:00:00Z",
+                "assets": [],
+            }
+        ]
+
+        candidate = release_rollback.select_release_by_tag(
+            releases,
+            release_tag="v1.2.1",
+            asset_name="production-release-metadata.json",
+        )
+
+        self.assertIsNone(candidate)
+
     def test_validate_command_reads_metadata_file(self):
         payload = {
             "release_tag": "v1.2.3",
@@ -122,6 +175,16 @@ class ReleaseRollbackTests(unittest.TestCase):
 
             validated = release_rollback.validate_metadata(json.loads(metadata_path.read_text(encoding="utf-8")))
             self.assertEqual(validated, payload)
+
+    def test_validate_metadata_rejects_missing_required_fields(self):
+        with self.assertRaisesRegex(ValueError, "missing required fields"):
+            release_rollback.validate_metadata(
+                {
+                    "release_tag": "v1.2.3",
+                    "release_sha": "abc123",
+                    "api_image": "repo@sha256:api123",
+                }
+            )
 
 
 if __name__ == "__main__":
