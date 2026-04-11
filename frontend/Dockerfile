@@ -1,4 +1,4 @@
-FROM node:22-alpine3.22 AS build
+FROM node:22.22.0-alpine3.22 AS build
 
 WORKDIR /app
 
@@ -8,7 +8,7 @@ RUN npm ci --no-audit
 COPY . .
 RUN npm run build
 
-FROM node:22-alpine3.22
+FROM node:22.22.0-alpine3.22
 
 WORKDIR /app
 
