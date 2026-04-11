@@ -21,10 +21,14 @@ interface DetailState {
   error: string | null;
 }
 
-export default function MainApp() {
+interface MainAppProps {
+  initialView?: ViewType;
+}
+
+export default function MainApp({ initialView = 'graph' }: MainAppProps) {
   const navigate = useNavigate();
   const { graph, loadGraph } = useAppContext();
-  const [currentView, setCurrentView] = useState<ViewType>('graph');
+  const [currentView, setCurrentView] = useState<ViewType>(initialView);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [detailState, setDetailState] = useState<DetailState>({
     status: 'idle',

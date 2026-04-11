@@ -79,7 +79,7 @@ Production release is tag-only: the workflow is not manually runnable with an ar
 
 The `TwinGraphOps Release` workflow will then:
 
-1. run API tests and build the frontend
+1. run API tests, frontend tests, and build the frontend
 2. resolve the previously published `sha-<commit>` images in ECR into immutable digest refs
 3. optionally alias those same digests to the release tag and `latest`
 4. use AWS Systems Manager to deploy those exact digest refs to the EC2 host

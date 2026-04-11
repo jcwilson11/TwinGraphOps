@@ -39,7 +39,7 @@ flowchart LR
 The repository uses GitHub Actions to model a deployment pipeline:
 
 1. Developer pushes code or opens a pull request.
-2. CI runs Python unit tests for the API.
+2. CI runs Python unit tests for the API and a dedicated frontend test suite.
 3. CI performs a local Docker Compose build and smoke test for source validation.
 4. Pushes to `main` and `dev` also build `api` and `frontend` once, publish them to Amazon ECR with immutable `sha-<commit>` tags, and capture the resulting digest refs.
 5. CI smoke-tests the exact published digest refs with ephemeral secret files.
@@ -239,17 +239,24 @@ curl "http://localhost:8000/risk?component_id=api"
 
 ## Test Coverage
 
-The repo includes API unit tests to show that CI verifies more than container startup.
+The repo includes API unit tests and frontend tests so CI verifies more than container startup.
 
 Run locally:
 
 ```bash
+npm --prefix frontend ci --no-audit
+npm --prefix frontend test
+
 python -m pip install -r api/requirements.txt
 python -m unittest discover -s api/tests -v
 ```
 
 The tests cover:
 
+- frontend server endpoints such as `/healthz` and `/config.js`
+- frontend route/page rendering for the upload, processing, and workspace views
+- frontend upload validation behavior for unsupported and oversize files
+- frontend API client error handling for malformed JSON, timeout, and network failures
 - root endpoint contract
 - readiness success path
 - readiness failure behavior
@@ -287,7 +294,7 @@ The `TwinGraphOps Release` workflow is triggered by a version tag such as `v1.0.
 - can only be started by pushing a `v*` tag; there is no manual arbitrary-ref production dispatch
 - is tied to the GitHub `production` environment
 - uses GitHub Actions OIDC to assume an AWS role
-- runs API tests and builds the frontend
+- runs API tests, frontend tests, and then builds the frontend
 - resolves previously published `sha-<commit>` images from Amazon ECR into immutable digest refs
 - optionally aliases those same digests to the release tag and `latest`
 - deploys the tagged ref to the EC2 production host with AWS Systems Manager
