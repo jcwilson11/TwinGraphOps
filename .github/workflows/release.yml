@@ -4,12 +4,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
-    inputs:
-      git_ref:
-        description: Git ref to release and deploy
-        required: true
-        default: main
 
 permissions:
   contents: write
@@ -21,7 +15,7 @@ env:
   PROD_EC2_INSTANCE_ID: ${{ vars.PROD_EC2_INSTANCE_ID }}
   API_ECR_REPOSITORY: ${{ vars.PROD_API_ECR_REPOSITORY || 'twingraphops-api' }}
   FRONTEND_ECR_REPOSITORY: ${{ vars.PROD_FRONTEND_ECR_REPOSITORY || 'twingraphops-frontend' }}
-  RELEASE_REF: ${{ github.event.inputs.git_ref || github.ref_name }}
+  RELEASE_REF: ${{ github.ref_name }}
   DEPLOY_REPO_URL: https://github.com/${{ github.repository }}.git
 
 concurrency:
@@ -117,12 +111,12 @@ jobs:
           FRONTEND_DIGEST="$(resolve_digest "$FRONTEND_ECR_REPOSITORY")"
 
           if [[ -z "$API_DIGEST" || "$API_DIGEST" == "None" ]]; then
-            echo "No promotable API image found for commit $RELEASE_SHA (tag $IMAGE_TAG)." >&2
+            echo "Release blocked: tag $RELEASE_REF points to commit $RELEASE_SHA, but no promotable API image exists for $IMAGE_TAG. Only previously validated CI artifacts may be released." >&2
             exit 1
           fi
 
           if [[ -z "$FRONTEND_DIGEST" || "$FRONTEND_DIGEST" == "None" ]]; then
-            echo "No promotable frontend image found for commit $RELEASE_SHA (tag $IMAGE_TAG)." >&2
+            echo "Release blocked: tag $RELEASE_REF points to commit $RELEASE_SHA, but no promotable frontend image exists for $IMAGE_TAG. Only previously validated CI artifacts may be released." >&2
             exit 1
           fi
 
@@ -131,7 +125,6 @@ jobs:
           echo "Resolved release images for commit $RELEASE_SHA using tag $IMAGE_TAG."
 
       - name: Tag release aliases in ECR
-        if: startsWith(env.RELEASE_REF, 'v')
         env:
           RELEASE_SHA: ${{ needs.validate-release.outputs.release_sha }}
         run: |
@@ -248,9 +241,6 @@ jobs:
   publish-github-release:
     needs: deploy-production
     runs-on: ubuntu-latest
-    if: |
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
-      (github.event_name == 'workflow_dispatch' && startsWith(inputs.git_ref, 'v'))
 
     steps:
       - name: Checkout repo
