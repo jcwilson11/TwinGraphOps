@@ -298,7 +298,9 @@ The `TwinGraphOps Release` workflow is triggered by a version tag such as `v1.0.
 - resolves previously published `sha-<commit>` images from Amazon ECR into immutable digest refs
 - optionally aliases those same digests to the release tag and `latest`
 - deploys the tagged ref to the EC2 production host with AWS Systems Manager
+- resolves the previous successful production release from GitHub release metadata before deploying
 - verifies final health, readiness, and metrics checks on the instance
+- automatically rolls back to the previous known-good digest refs if the production deployment fails
 - publishes the GitHub Release after deployment succeeds
 
 ### GitHub Actions AWS configuration
@@ -329,32 +331,24 @@ For the AWS bootstrap steps and CloudFormation template, see `infra/aws/README.m
 
 ## Rollback Procedure
 
-This repo documents rollback as a repeatable operator action rather than an automated cloud rollback.
+Production rollback is now operationalized in the tagged release workflow.
 
-### If a deployment-like promotion fails
+- each successful production release publishes `production-release-metadata.json` as a GitHub release asset
+- that asset records the release tag, commit SHA, API digest ref, frontend digest ref, and deployment timestamp
+- before a new production deploy starts, the workflow resolves the most recent prior release with that metadata asset
+- if the new production deployment fails after the rollout command is sent, the workflow automatically redeploys that previous known-good API/frontend digest pair through the same `infra/scripts/deploy-ec2-compose.sh` path
+- if no previous successful production release metadata exists yet, the workflow fails loudly instead of attempting a fake rollback
 
-1. Inspect the GitHub Actions logs for the failing job.
-2. Inspect service logs:
-   - `docker compose logs api`
-   - `docker compose logs frontend`
-   - `docker compose logs neo4j`
-3. Check:
-   - `GET /health`
-   - `GET /ready`
-   - `GET /health/neo4j`
-   - `GET /metrics`
-4. Stop the stack:
+Operator follow-up stays simple:
 
-```bash
-docker compose down -v
-```
-
-5. Re-deploy the last known-good commit:
-
-```bash
-git checkout <known-good-commit>
-docker compose up --build
-```
+1. Inspect the failed release job and the rollback job logs in GitHub Actions.
+2. Confirm the rollback target release tag and digest refs shown in the workflow summary.
+3. Verify the restored production instance:
+   - `GET /healthz`
+   - `GET /api/health`
+   - `GET /api/ready`
+   - `GET /api/metrics`
+4. If both deploy and rollback fail, investigate the EC2 host and rerun from the last known-good release tag after fixing the root cause.
 
 ## Evidence Table
 
@@ -369,4 +363,4 @@ docker compose up --build
 | Secret isolation | `.gitignore`, `infra/scripts/setup-local-secrets.sh`, `infra/scripts/bootstrap-secrets-from-aws.sh` |
 | Health and readiness | `api/main.py`, `frontend/server.js` |
 | Metrics visibility | `api/main.py` |
-| Rollback story | this README |
+| Rollback automation | `.github/workflows/release.yml`, `infra/scripts/release_rollback.py`, `infra/tests/test_release_rollback.py` |

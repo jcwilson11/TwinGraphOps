@@ -49,6 +49,9 @@ jobs:
           python -m pip install -r api/requirements.txt
           python -m unittest discover -s api/tests -v
 
+      - name: Run release rollback automation tests
+        run: python -m unittest discover -s infra/tests -v
+
       - name: Build Docker images
         run: docker compose build
 
