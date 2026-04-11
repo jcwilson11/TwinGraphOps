@@ -284,6 +284,7 @@ The `deploy-staging` job:
 
 The `TwinGraphOps Release` workflow is triggered by a version tag such as `v1.0.0` and:
 
+- can only be started by pushing a `v*` tag; there is no manual arbitrary-ref production dispatch
 - is tied to the GitHub `production` environment
 - uses GitHub Actions OIDC to assume an AWS role
 - runs API tests and builds the frontend
@@ -315,7 +316,7 @@ The promotable branch CI jobs also publish immutable `sha-<commit>` tags into th
 
 Because those promotable images are published into the existing production ECR repositories, the CI publish path uses `PROD_AWS_ROLE_ARN` for ECR write access, and the staging role must be able to pull from those repositories during staging simulation.
 
-The tagged release workflow uses the same OIDC model, resolves those previously published digest refs from ECR, and deploys the production host with `infra/scripts/deploy-ec2-compose.sh` and the `docker-compose.cloud.yml` topology.
+The tagged release workflow uses the same OIDC model, resolves those previously published digest refs from ECR, and deploys the production host with `infra/scripts/deploy-ec2-compose.sh` and the `docker-compose.cloud.yml` topology. A production tag is therefore the approval boundary: it must point to a commit whose CI run already published promotable images.
 
 For the AWS bootstrap steps and CloudFormation template, see `infra/aws/README.md`.
 
