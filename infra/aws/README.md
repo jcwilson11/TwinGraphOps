@@ -64,6 +64,8 @@ The GitHub OIDC role should be able to:
 - create the ECR repositories if they do not exist yet
 - call `ssm:SendCommand`, `ssm:GetCommandInvocation`, and related read APIs for the production instance
 
+The staging GitHub Actions role should be able to read from the shared API/frontend ECR repositories because the `dev` branch staging simulation now pulls the exact digest refs published by CI.
+
 ## 4. Release to production
 
 Create and push a version tag:
@@ -73,12 +75,19 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
+Production release is tag-only: the workflow is not manually runnable with an arbitrary branch, SHA, or other ref. The tag must point to a commit whose CI run already published promotable `sha-<commit>` images into ECR.
+
 The `TwinGraphOps Release` workflow will then:
 
-1. run API tests and build the frontend
-2. build and push `api` and `frontend` images to ECR
-3. use AWS Systems Manager to deploy that ref to the EC2 host
-4. publish the GitHub release
+1. run API tests, frontend tests, and build the frontend
+2. resolve the previously published `sha-<commit>` images in ECR into immutable digest refs
+3. resolve the previous successful production release from its `production-release-metadata.json` GitHub release asset
+4. optionally alias those same digests to the release tag and `latest`
+5. use AWS Systems Manager to deploy those exact digest refs to the EC2 host
+6. automatically roll back to the prior known-good digest refs if that production deployment fails
+7. publish the GitHub release and attach the new `production-release-metadata.json` asset after a successful deploy
+
+If there is no prior successful production release yet, the workflow does not invent a rollback target. It fails clearly so the operator can investigate the initial release problem.
 
 ## 5. Verify the deployment
 
