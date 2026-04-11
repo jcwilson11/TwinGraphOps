@@ -99,6 +99,39 @@ def select_previous_release_candidate(
     return None
 
 
+def select_release_by_tag(
+    releases: list[dict[str, Any]],
+    *,
+    release_tag: str,
+    asset_name: str,
+) -> dict[str, str] | None:
+    for release in releases:
+        if release.get("draft"):
+            continue
+        tag_name = release.get("tag_name")
+        if tag_name != release_tag:
+            continue
+
+        for asset in release.get("assets") or []:
+            if asset.get("name") != asset_name:
+                continue
+
+            asset_url = asset.get("url")
+            if not isinstance(asset_url, str) or not asset_url:
+                continue
+
+            return {
+                "release_tag": release_tag,
+                "asset_name": asset_name,
+                "asset_url": asset_url,
+                "published_at": str(release.get("published_at") or ""),
+            }
+
+        return None
+
+    return None
+
+
 def load_json(path: str) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
@@ -178,6 +211,34 @@ def cmd_select(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_select_tag(args: argparse.Namespace) -> int:
+    releases = load_json(args.releases)
+    if not isinstance(releases, list):
+        raise ValueError("The releases payload must be a JSON array.")
+
+    candidate = select_release_by_tag(
+        releases,
+        release_tag=args.release_tag,
+        asset_name=args.asset_name,
+    )
+    if candidate is None:
+        raise ValueError(
+            f"Release tag {args.release_tag} does not exist or does not have a {args.asset_name} asset."
+        )
+
+    write_github_outputs(
+        args.github_output,
+        {
+            "release_tag": candidate["release_tag"],
+            "rollback_asset_url": candidate["asset_url"],
+            "rollback_asset_name": candidate["asset_name"],
+            "rollback_published_at": candidate["published_at"],
+        },
+    )
+    print(json.dumps(candidate, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -202,6 +263,13 @@ def build_parser() -> argparse.ArgumentParser:
     select_parser.add_argument("--asset-name", required=True)
     select_parser.add_argument("--github-output")
     select_parser.set_defaults(func=cmd_select)
+
+    select_tag_parser = subparsers.add_parser("select-tag", help="Select rollback metadata for a specific release tag.")
+    select_tag_parser.add_argument("--releases", required=True)
+    select_tag_parser.add_argument("--release-tag", required=True)
+    select_tag_parser.add_argument("--asset-name", required=True)
+    select_tag_parser.add_argument("--github-output")
+    select_tag_parser.set_defaults(func=cmd_select_tag)
 
     return parser
 
