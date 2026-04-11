@@ -43,23 +43,28 @@ if (testFiles.length === 0) {
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
 
-await build({
-  entryPoints: testFiles,
-  outbase: testsDir,
-  outdir: outDir,
-  bundle: true,
-  format: 'esm',
-  platform: 'node',
-  target: 'node22',
-  jsx: 'automatic',
-  packages: 'external',
-  sourcemap: 'inline',
-  logLevel: 'silent',
-  loader: {
-    '.ts': 'ts',
-    '.tsx': 'tsx',
-  },
-});
+for (const testFile of testFiles) {
+  const relativePath = path.relative(testsDir, testFile);
+  const shouldBundle = !relativePath.endsWith('server.test.ts');
+
+  await build({
+    entryPoints: [testFile],
+    outbase: testsDir,
+    outdir: outDir,
+    bundle: shouldBundle,
+    format: 'esm',
+    platform: 'node',
+    target: 'node22',
+    jsx: 'automatic',
+    packages: 'external',
+    sourcemap: 'inline',
+    logLevel: 'silent',
+    loader: {
+      '.ts': 'ts',
+      '.tsx': 'tsx',
+    },
+  });
+}
 
 const compiledTests = testFiles.map((file) =>
   path.join(
