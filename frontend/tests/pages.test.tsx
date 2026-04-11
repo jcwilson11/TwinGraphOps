@@ -10,7 +10,7 @@ installRuntimeWindowConfig();
 const { AppContext } = await import('../src/state/AppContext');
 const { default: LandingPage } = await import('../src/pages/LandingPage');
 const { default: ProcessingPage } = await import('../src/pages/ProcessingPage');
-const { default: MainApp } = await import('../src/pages/MainApp');
+const { default: SystemOverview } = await import('../src/components/SystemOverview');
 
 function renderWithContext(
   element: ReactNode,
@@ -52,22 +52,13 @@ test('processing page renders the active processing state', () => {
   assert.match(html, /Uploading system\.md/);
 });
 
-test('main app renders the workspace for a loaded graph', () => {
+test('system overview renders the loaded workspace summary', () => {
   const graphData = createSampleGraphData();
-  const html = renderWithContext(
-    <MainApp initialView="overview" />,
-    {
-      graph: {
-        status: 'ready',
-        data: graphData,
-        error: null,
-        lastLoadedAt: Date.now(),
-      },
-    },
-    ['/app']
-  );
+  const html = renderToStaticMarkup(<SystemOverview graphData={graphData} />);
 
-  assert.match(html, /Active Graph Workspace/);
-  assert.match(html, /2 components, 1 relationships/);
   assert.match(html, /System Overview/);
+  assert.match(html, /Total Components/);
+  assert.match(html, /Relationships/);
+  assert.match(html, /Most Connected Components/);
+  assert.match(html, /API Service/);
 });
