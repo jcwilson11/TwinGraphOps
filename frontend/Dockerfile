@@ -17,7 +17,8 @@ RUN apk upgrade --no-cache
 COPY package*.json ./
 RUN npm ci --omit=dev --no-audit \
     && npm cache clean --force \
-    && rm -rf /root/.npm
+    && rm -rf /root/.npm \
+    && rm -f package.json package-lock.json
 
 COPY --from=build /app/dist ./dist
 COPY server.js ./
