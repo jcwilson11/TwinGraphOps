@@ -331,24 +331,25 @@ For the AWS bootstrap steps and CloudFormation template, see `infra/aws/README.m
 
 ## Rollback Procedure
 
-Production rollback is now operationalized in the tagged release workflow.
+Production rollback is now operationalized in two ways:
 
 - each successful production release publishes `production-release-metadata.json` as a GitHub release asset
 - that asset records the release tag, commit SHA, API digest ref, frontend digest ref, and deployment timestamp
 - before a new production deploy starts, the workflow resolves the most recent prior release with that metadata asset
 - if the new production deployment fails after the rollout command is sent, the workflow automatically redeploys that previous known-good API/frontend digest pair through the same `infra/scripts/deploy-ec2-compose.sh` path
+- operators can also trigger the `TwinGraphOps Manual Rollback` workflow and supply a previous production release tag to redeploy that exact recorded digest pair on demand
 - if no previous successful production release metadata exists yet, the workflow fails loudly instead of attempting a fake rollback
 
 Operator follow-up stays simple:
 
-1. Inspect the failed release job and the rollback job logs in GitHub Actions.
+1. Inspect the failed release job, automatic rollback job, or manual rollback job logs in GitHub Actions.
 2. Confirm the rollback target release tag and digest refs shown in the workflow summary.
 3. Verify the restored production instance:
    - `GET /healthz`
    - `GET /api/health`
    - `GET /api/ready`
    - `GET /api/metrics`
-4. If both deploy and rollback fail, investigate the EC2 host and rerun from the last known-good release tag after fixing the root cause.
+4. If both deploy and rollback fail, investigate the EC2 host and rerun the manual rollback workflow with the last known-good release tag after fixing the root cause.
 
 ## Evidence Table
 
@@ -363,4 +364,4 @@ Operator follow-up stays simple:
 | Secret isolation | `.gitignore`, `infra/scripts/setup-local-secrets.sh`, `infra/scripts/bootstrap-secrets-from-aws.sh` |
 | Health and readiness | `api/main.py`, `frontend/server.js` |
 | Metrics visibility | `api/main.py` |
-| Rollback automation | `.github/workflows/release.yml`, `infra/scripts/release_rollback.py`, `infra/tests/test_release_rollback.py` |
+| Rollback automation | `.github/workflows/release.yml`, `.github/workflows/manual-rollback.yml`, `infra/scripts/release_rollback.py`, `infra/tests/test_release_rollback.py` |
