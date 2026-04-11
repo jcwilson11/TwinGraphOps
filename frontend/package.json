@@ -6,7 +6,8 @@
     "dev": "vite --host 0.0.0.0 --port 3000",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node ./scripts/run-tests.mjs"
   },
   "dependencies": {
     "express": "^4.21.2",
