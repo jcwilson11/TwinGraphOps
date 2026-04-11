@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-const { createApp } = await import('../server.js');
+const serverModule = await import('../server.js');
+const { createApp } = serverModule.default ?? serverModule;
 
 async function withServer(app: ReturnType<typeof createApp>, callback: (baseUrl: string) => Promise<void>) {
   const server = app.listen(0, '127.0.0.1');
