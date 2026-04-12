@@ -519,29 +519,21 @@ jobs:
       - name: Prepare staging secret files
         env:
           AWS_REGION: ${{ vars.AWS_REGION }}
-          PROD_AWS_ROLE_ARN: ${{ vars.PROD_AWS_ROLE_ARN }}
           AWS_ROLE_ARN: ${{ vars.STAGING_AWS_ROLE_ARN }}
           AWS_SECRETS_MANAGER_SECRET_ID: ${{ vars.STAGING_AWS_SECRET_ID }}
         run: |
           test -n "$AWS_REGION"
-          test -n "$PROD_AWS_ROLE_ARN"
           test -n "$AWS_ROLE_ARN"
           test -n "$AWS_SECRETS_MANAGER_SECRET_ID"
 
-      - name: Configure AWS credentials for ECR pull
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.PROD_AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-
-      - name: Log in to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Configure AWS credentials (staging secrets)
+      - name: Configure AWS credentials (staging)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.STAGING_AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Prepare staging secret files from AWS Secrets Manager
         env:

@@ -64,7 +64,14 @@ The GitHub OIDC role should be able to:
 - create the ECR repositories if they do not exist yet
 - call `ssm:SendCommand`, `ssm:GetCommandInvocation`, and related read APIs for the production instance
 
-The `dev` branch staging simulation pulls the exact digest refs published by CI from the shared production ECR repositories. In this repo's workflow, GitHub Actions uses the production ECR-capable role for the Docker login step, then switches back to the staging role to read staging secrets from Secrets Manager before running the compose-based deployment simulation.
+The `dev` branch staging simulation pulls the exact digest refs published by CI from the shared production ECR repositories using the staging GitHub Actions role. That staging role therefore needs ECR pull permissions in addition to Secrets Manager read access.
+
+Minimum ECR permissions for the staging role:
+
+- `ecr:GetAuthorizationToken` on `*`
+- `ecr:BatchCheckLayerAvailability` on the shared API/frontend repositories
+- `ecr:BatchGetImage` on the shared API/frontend repositories
+- `ecr:GetDownloadUrlForLayer` on the shared API/frontend repositories
 
 ## 4. Release to production
 
