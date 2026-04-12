@@ -41,8 +41,8 @@ The repository uses GitHub Actions to model a deployment pipeline:
 1. Developer pushes code or opens a pull request.
 2. CI runs Python unit tests for the API and a dedicated frontend test suite.
 3. CI performs a local Docker Compose build and smoke test for source validation.
-4. Pushes to `main` and `dev` also build `api` and `frontend` once, publish them to Amazon ECR with immutable `sha-<commit>` tags, and capture the resulting digest refs.
-5. CI smoke-tests the exact published digest refs with ephemeral secret files.
+4. Pushes to `twin-*` build the local `api` and `frontend` Docker images and run Trivy image scans against those local tags before smoke tests.
+5. Pushes to `main` and `dev` also build `api` and `frontend` once, publish them to Amazon ECR with immutable `sha-<commit>` tags, and capture the resulting digest refs.
 6. CI verifies:
    - API liveness: `/health`
    - API readiness: `/ready`
@@ -52,7 +52,7 @@ The repository uses GitHub Actions to model a deployment pipeline:
    - secret scanning with Gitleaks
    - static analysis with CodeQL
    - filesystem vulnerability scanning with Trivy
-8. Promotable branch pushes run Trivy image scans against the exact published digest refs.
+8. Pushes to `main` and `dev` run Trivy image scans against the exact published digest refs after the publish step completes.
 9. Pushes to `dev` run a **staging-like promotion** job using those same digest refs.
 10. Pushes to `main` run a **production-like promotion** job gated by the GitHub `production` environment, again using those same digest refs.
 
@@ -80,7 +80,7 @@ This project treats security as part of delivery, adopting the DevSecOps mindset
 | Secret detection | `secret-scan.yml` with Gitleaks | Prevent accidental credential commits |
 | Static analysis | `codeql.yml` | Detect common code-level security issues |
 | Filesystem vulnerability scanning | `trivy.yml` | Detect vulnerable packages in the source tree |
-| Published image scanning | `.github/workflows/ci.yml` with Trivy | Scan the exact digest refs promoted by CI |
+| Local and published image scanning | `.github/workflows/ci.yml` with Trivy | Scan local `twin-*` image builds before promotion and scan exact digest refs on `main`/`dev` |
 | Secret isolation | `infra/secrets/*.txt` ignored in git | Keep operational credentials out of version control |
 | Environment-based secrets | AWS Secrets Manager plus GitHub Actions OIDC | Keep GitHub out of long-lived secret storage while separating environments |
 
@@ -321,7 +321,7 @@ Optional release variables:
 
 The staging and production jobs use `aws-actions/configure-aws-credentials` with OIDC, then run `infra/scripts/bootstrap-secrets-from-aws.sh` to write the existing secret files consumed by Docker Compose and the API.
 
-The promotable branch CI jobs also publish immutable `sha-<commit>` tags into the existing ECR repos and record the resulting digest refs in an `image-manifest` artifact.
+Pushes to `twin-*` do not publish images; they only build local tags and run image vulnerability scans inside CI. Pushes to `main` and `dev` publish immutable `sha-<commit>` tags into the existing ECR repos and record the resulting digest refs in an `image-manifest` artifact.
 
 Because those promotable images are published into the existing production ECR repositories, the CI publish path uses `PROD_AWS_ROLE_ARN` for ECR write access, and the staging role must be able to pull from those repositories during staging simulation.
 
