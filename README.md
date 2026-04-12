@@ -323,7 +323,7 @@ The staging and production jobs use `aws-actions/configure-aws-credentials` with
 
 Pushes to `twin-*` do not publish images; they only build local tags and run image vulnerability scans inside CI. Pushes to `main` and `dev` publish immutable `sha-<commit>` tags into the existing ECR repos and record the resulting digest refs in an `image-manifest` artifact.
 
-Because those promotable images are published into the existing production ECR repositories, the CI publish path uses `PROD_AWS_ROLE_ARN` for ECR write access, and the staging role must be able to pull from those repositories during staging simulation.
+Because those promotable images are published into the existing production ECR repositories, the CI publish path uses `PROD_AWS_ROLE_ARN` for ECR write access. The staging deployment simulation now uses that same production ECR-capable role only to log Docker into ECR, then switches back to `STAGING_AWS_ROLE_ARN` to read staging secrets from Secrets Manager before composing the stack.
 
 The tagged release workflow uses the same OIDC model, resolves those previously published digest refs from ECR, and deploys the production host with `infra/scripts/deploy-ec2-compose.sh` and the `docker-compose.cloud.yml` topology. A production tag is therefore the approval boundary: it must point to a commit whose CI run already published promotable images.
 
