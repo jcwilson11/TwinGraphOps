@@ -71,6 +71,10 @@ Resources:
                 Action:
                   - secretsmanager:GetSecretValue
                 Resource: !Ref AwsSecretArn
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectName}/production/gemini_model'
       Tags:
         - Key: Name
           Value: !Sub '${ProjectName}-role'

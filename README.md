@@ -287,6 +287,7 @@ TwinGraphOps now has a real production deployment path that builds directly on t
 - tagged releases build immutable `api` and `frontend` images and push them to Amazon ECR
 - AWS Systems Manager tells the production EC2 host to pull the tagged images and restart `docker-compose.cloud.yml`
 - the EC2 host loads Neo4j and Gemini credentials from AWS Secrets Manager at deploy time
+- the EC2 host reads the production Gemini model from Systems Manager Parameter Store at `/twingraphops/production/gemini_model`
 
 The production runtime is intentionally simple and budget-aware: one EC2 instance runs `nginx`, `frontend`, `api`, and `neo4j`, which keeps the first cloud release inside a small-credit footprint while still being a real AWS deployment.
 
@@ -331,6 +332,8 @@ Optional release variables:
 The staging and production jobs use `aws-actions/configure-aws-credentials` with OIDC, then run `infra/scripts/bootstrap-secrets-from-aws.sh` to write the existing secret files consumed by Docker Compose and the API.
 
 The tagged release workflow uses the same OIDC model, but deploys the production host with `infra/scripts/deploy-ec2-compose.sh` and the `docker-compose.cloud.yml` topology.
+
+The deploy script uses `GEMINI_MODEL` if it is provided explicitly. Otherwise, it reads `/twingraphops/production/gemini_model` from AWS Systems Manager Parameter Store and writes that value into the generated cloud env file before Docker Compose restarts the API.
 
 For the AWS bootstrap steps and CloudFormation template, see `infra/aws/README.md`.
 
