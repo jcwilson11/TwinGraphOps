@@ -121,7 +121,7 @@ Resources:
             echo "Unsupported architecture for Docker Compose: $ARCH" >&2
             exit 1
           fi
-          curl -SL "https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-${COMPOSE_ARCH}" \
+          curl -SL "https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-$${COMPOSE_ARCH}" \
             -o /usr/local/lib/docker/cli-plugins/docker-compose
           chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
           docker compose version
