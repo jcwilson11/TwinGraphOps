@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, RefreshCcw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import EmptyState from '../components/EmptyState';
-import GraphView from '../components/GraphView';
 import NodesEdgesView from '../components/NodesEdgesView';
 import RiskAnalysis from '../components/RiskAnalysis';
 import Sidebar, { type ViewType } from '../components/Sidebar';
@@ -15,16 +14,22 @@ import { getImpact, getRisk } from '../lib/api';
 import { buildGraphSummary } from '../lib/selectors';
 import { useAppContext } from '../state/AppContext';
 
+const GraphView = lazy(() => import('../components/GraphView'));
+
 interface DetailState {
   status: LoadStatus;
   data: NodeDetails | null;
   error: string | null;
 }
 
-export default function MainApp() {
+interface MainAppProps {
+  initialView?: ViewType;
+}
+
+export default function MainApp({ initialView = 'graph' }: MainAppProps) {
   const navigate = useNavigate();
   const { graph, loadGraph } = useAppContext();
-  const [currentView, setCurrentView] = useState<ViewType>('graph');
+  const [currentView, setCurrentView] = useState<ViewType>(initialView);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [detailState, setDetailState] = useState<DetailState>({
     status: 'idle',
@@ -183,19 +188,30 @@ export default function MainApp() {
         <div className="min-h-0 flex-1 overflow-hidden">
           {currentView === 'graph' && (
             <div className="h-full p-6">
-              <GraphView
-                graphData={graph.data}
-                selectedNodeId={selectedNodeId}
-                selectedNodeDetails={detailState.data}
-                detailsStatus={detailState.status}
-                detailsError={detailState.error}
-                onNodeSelect={handleNodeSelect}
-                onRetryDetails={() => {
-                  if (selectedNodeId) {
-                    void loadNodeDetails(selectedNodeId);
-                  }
-                }}
-              />
+              <Suspense
+                fallback={
+                  <div className="flex h-full items-center justify-center rounded-[24px] border border-slate-700 bg-[#d9d9d9]">
+                    <div className="flex items-center gap-3 text-slate-700">
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      <span>Loading graph view...</span>
+                    </div>
+                  </div>
+                }
+              >
+                <GraphView
+                  graphData={graph.data}
+                  selectedNodeId={selectedNodeId}
+                  selectedNodeDetails={detailState.data}
+                  detailsStatus={detailState.status}
+                  detailsError={detailState.error}
+                  onNodeSelect={handleNodeSelect}
+                  onRetryDetails={() => {
+                    if (selectedNodeId) {
+                      void loadNodeDetails(selectedNodeId);
+                    }
+                  }}
+                />
+              </Suspense>
             </div>
           )}
           {currentView === 'risk' && <RiskAnalysis graphData={graph.data} />}

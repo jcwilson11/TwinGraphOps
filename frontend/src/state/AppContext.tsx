@@ -5,7 +5,7 @@ import { ApiClientError, getGraph, uploadDocument } from '../lib/api';
 import { appConfig } from '../lib/config';
 import type { GraphState, UploadState } from '../types/app';
 
-interface AppContextValue {
+export interface AppContextValue {
   upload: UploadState;
   graph: GraphState;
   setDragActive: (active: boolean) => void;
@@ -16,9 +16,9 @@ interface AppContextValue {
   resetUploadState: () => void;
 }
 
-const AppContext = createContext<AppContextValue | null>(null);
+export const AppContext = createContext<AppContextValue | null>(null);
 
-const initialUploadState: UploadState = {
+export const initialUploadState: UploadState = {
   phase: 'idle',
   selectedFile: null,
   error: null,
@@ -36,11 +36,53 @@ const initialGraphState: GraphState = {
   lastLoadedAt: null,
 };
 
-const supportedExtensions = ['.md', '.txt'];
+export const supportedExtensions = ['.md', '.txt'];
 
-function getFileExtension(filename: string) {
+export function getFileExtension(filename: string) {
   const segments = filename.toLowerCase().split('.');
   return segments.length > 1 ? `.${segments.pop()}` : '';
+}
+
+export function createSelectedFileUploadState(file: File): UploadState {
+  return {
+    phase: 'file-selected',
+    selectedFile: file,
+    error: null,
+    statusMessage: `Ready to analyze ${file.name}.`,
+    ingestion: null,
+    startedAt: null,
+    completedAt: null,
+    retryCount: 0,
+  };
+}
+
+export function createUploadErrorState(error: string, statusMessage: string): UploadState {
+  return {
+    ...initialUploadState,
+    phase: 'error',
+    error,
+    statusMessage,
+  };
+}
+
+export function validateSelectedFile(file: File | null, maxUploadBytes: number): UploadState {
+  if (!file) {
+    return initialUploadState;
+  }
+
+  const extension = getFileExtension(file.name);
+  if (!supportedExtensions.includes(extension)) {
+    return createUploadErrorState('Only .md and .txt files are supported.', 'Unsupported file type.');
+  }
+
+  if (file.size > maxUploadBytes) {
+    return createUploadErrorState(
+      `File exceeds the ${Math.round(maxUploadBytes / 1024 / 1024)} MB upload limit.`,
+      'Selected file is too large.'
+    );
+  }
+
+  return createSelectedFileUploadState(file);
 }
 
 function toFriendlyMessage(error: unknown) {
@@ -75,43 +117,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const selectFile = useCallback((file: File | null) => {
-    if (!file) {
-      setUpload(initialUploadState);
-      return false;
-    }
-
-    const extension = getFileExtension(file.name);
-    if (!supportedExtensions.includes(extension)) {
-      setUpload({
-        ...initialUploadState,
-        phase: 'error',
-        error: 'Only .md and .txt files are supported.',
-        statusMessage: 'Unsupported file type.',
-      });
-      return false;
-    }
-
-    if (file.size > appConfig.maxUploadBytes) {
-      setUpload({
-        ...initialUploadState,
-        phase: 'error',
-        error: `File exceeds the ${Math.round(appConfig.maxUploadBytes / 1024 / 1024)} MB upload limit.`,
-        statusMessage: 'Selected file is too large.',
-      });
-      return false;
-    }
-
-    setUpload({
-      phase: 'file-selected',
-      selectedFile: file,
-      error: null,
-      statusMessage: `Ready to analyze ${file.name}.`,
-      ingestion: null,
-      startedAt: null,
-      completedAt: null,
-      retryCount: 0,
-    });
-    return true;
+    const nextState = validateSelectedFile(file, appConfig.maxUploadBytes);
+    setUpload(nextState);
+    return nextState.phase === 'file-selected';
   }, []);
 
   const clearSelectedFile = useCallback(() => {

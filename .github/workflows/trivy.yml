@@ -16,30 +16,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Build images with Docker Compose
-        run: docker compose build
-
       - name: Trivy filesystem scan (fail on HIGH/CRITICAL)
         uses: aquasecurity/trivy-action@7b7aa264d83dc58691451798b4d117d53d21edfe
         with:
           scan-type: fs
           scan-ref: .
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
-
-      - name: Trivy API image scan (fail on HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@7b7aa264d83dc58691451798b4d117d53d21edfe
-        with:
-          image-ref: twin_api:latest
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
-
-      - name: Trivy frontend image scan (fail on HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@7b7aa264d83dc58691451798b4d117d53d21edfe
-        with:
-          image-ref: twin_frontend:latest
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: '1'

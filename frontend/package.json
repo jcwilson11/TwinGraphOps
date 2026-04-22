@@ -6,11 +6,10 @@
     "dev": "vite --host 0.0.0.0 --port 3000",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node ./scripts/run-tests.mjs"
   },
   "dependencies": {
-    "express": "^4.21.2",
-    "express-rate-limit": "^8.3.1",
     "lucide-react": "^0.511.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -18,17 +17,22 @@
     "react-router-dom": "^7.6.2"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.1.8",
+    "@tailwindcss/vite": "^4.2.2",
     "@types/node": "^24.0.3",
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.5",
-    "@vitejs/plugin-react": "^4.4.1",
+    "@vitejs/plugin-react": "^4.7.0",
     "tailwindcss": "^4.1.8",
     "typescript": "^5.8.3",
-    "vite": "^6.3.5"
+    "vite": "^6.4.2"
   },
   "overrides": {
+    "glob": "10.5.0",
+    "lodash-es": "4.18.1",
     "minimatch": "10.2.3",
-    "tar": "7.5.10"
+    "path-to-regexp": "0.1.13",
+    "picomatch": "4.0.4",
+    "tinyglobby": "0.2.16",
+    "tar": "7.5.11"
   }
 }
