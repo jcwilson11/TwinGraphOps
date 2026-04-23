@@ -133,6 +133,15 @@ class TwinGraphOpsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "empty_upload")
 
+    def test_ingest_rejects_unsafe_ingestion_id(self):
+        response = self.client.post(
+            "/ingest",
+            files={"file": ("manual.md", io.BytesIO(b"Example manual text"), "text/markdown")},
+            data={"ingestion_id": "../escape"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "invalid_ingestion_id")
+
     def test_ingest_persists_graph_and_artifacts(self):
         chunk_graph = ChunkGraph(
             nodes=[
@@ -158,6 +167,32 @@ class TwinGraphOpsApiTests(unittest.TestCase):
         self.assertEqual(payload["source"], "user")
         self.assertEqual(payload["chunks_total"], 1)
         persist_graph.assert_called_once()
+
+    def test_ingest_accepts_safe_client_supplied_ingestion_id(self):
+        chunk_graph = ChunkGraph(
+            nodes=[ChunkNode(id="C1", name="Frontend", type="software", description="UI")],
+            edges=[],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            main, "get_gemini_client", return_value=FakeExtractor(graph=chunk_graph)
+        ), patch.object(main, "persist_graph_to_store"), patch.object(
+            main, "get_artifacts_root", return_value=Path(tmpdir)
+        ):
+            response = self.client.post(
+                "/ingest",
+                files={"file": ("manual.md", io.BytesIO(b"Example manual text"), "text/markdown")},
+                data={"ingestion_id": "client_ingest-01"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()["data"]
+        self.assertEqual(payload["ingestion_id"], "client_ingest-01")
+        self.assertTrue((Path(tmpdir) / "client_ingest-01" / "merged_graph.json").exists())
+
+    def test_get_ingestion_events_rejects_unsafe_ingestion_id(self):
+        response = self.client.get("/ingest/../events")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "invalid_ingestion_id")
 
     def test_ingest_fails_closed_when_gemini_chunk_is_invalid(self):
         error = GeminiExtractionError(

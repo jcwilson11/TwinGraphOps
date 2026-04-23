@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import time
 import traceback
 import uuid
@@ -49,6 +50,7 @@ REQUEST_ID_CTX: ContextVar[str] = ContextVar("request_id", default="-")
 
 LOGGER = logging.getLogger("twingraphops")
 LOGGER.setLevel(logging.INFO)
+INGESTION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 if not LOGGER.handlers:
     handler = logging.StreamHandler()
@@ -350,6 +352,44 @@ def get_artifacts_root() -> Path:
     return Path(os.getenv("ARTIFACTS_DIR", "runtime/artifacts"))
 
 
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def normalize_ingestion_id(ingestion_id: str | None) -> str:
+    if ingestion_id is None:
+        return str(uuid.uuid4())
+
+    normalized = ingestion_id.strip()
+    if not normalized:
+        raise ApiError(
+            400,
+            "invalid_ingestion_id",
+            "ingestion_id must contain only letters, numbers, hyphens, and underscores.",
+        )
+
+    if not INGESTION_ID_PATTERN.fullmatch(normalized):
+        raise ApiError(
+            400,
+            "invalid_ingestion_id",
+            "ingestion_id must contain only letters, numbers, hyphens, and underscores.",
+        )
+
+    return normalized
+
+
+def get_artifact_dir(ingestion_id: str) -> Path:
+    artifacts_root = get_artifacts_root().resolve()
+    artifact_dir = (artifacts_root / ingestion_id).resolve()
+    if not _is_relative_to(artifact_dir, artifacts_root):
+        raise ApiError(400, "invalid_ingestion_id", "ingestion_id resolved outside the configured artifacts directory.")
+    return artifact_dir
+
+
 def check_neo4j() -> tuple[bool, str | None]:
     start_time = time.perf_counter()
     try:
@@ -645,8 +685,8 @@ def ensure_active_graph() -> MergedGraph:
 
 
 def run_ingestion_pipeline(filename: str, text: str, replace_existing: bool, ingestion_id: str | None = None) -> dict[str, Any]:
-    ingestion_id = ingestion_id or str(uuid.uuid4())
-    artifact_dir = get_artifacts_root() / ingestion_id
+    ingestion_id = normalize_ingestion_id(ingestion_id)
+    artifact_dir = get_artifact_dir(ingestion_id)
     INGESTION_EVENTS.register(ingestion_id, filename)
 
     log_event(
@@ -931,6 +971,7 @@ def metrics():
 
 @app.get("/ingest/{ingestion_id}/events")
 def get_ingestion_events(ingestion_id: str):
+    ingestion_id = normalize_ingestion_id(ingestion_id)
     return success_response(INGESTION_EVENTS.get(ingestion_id))
 
 
@@ -1026,13 +1067,14 @@ def risk(component_id: str):
 
 @app.post("/ingest")
 def ingest(file: UploadFile = File(...), replace_existing: bool = Form(True), ingestion_id: str | None = Form(None)):
-    if ingestion_id:
-        INGESTION_EVENTS.register(ingestion_id)
+    normalized_ingestion_id = normalize_ingestion_id(ingestion_id) if ingestion_id is not None else None
+    if normalized_ingestion_id:
+        INGESTION_EVENTS.register(normalized_ingestion_id)
     filename, text = read_upload(file)
     log_event(
         "info",
         "ingest_endpoint_called",
-        ingestion_id=ingestion_id,
+        ingestion_id=normalized_ingestion_id,
         filename=filename,
         replace_existing=replace_existing,
         payload_chars=len(text),
@@ -1042,6 +1084,6 @@ def ingest(file: UploadFile = File(...), replace_existing: bool = Form(True), in
             filename=filename,
             text=text,
             replace_existing=replace_existing,
-            ingestion_id=ingestion_id,
+            ingestion_id=normalized_ingestion_id,
         )
     )
