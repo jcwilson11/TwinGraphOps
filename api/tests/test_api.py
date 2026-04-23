@@ -184,13 +184,13 @@ class TwinGraphOpsApiTests(unittest.TestCase):
                 data={"ingestion_id": "client_ingest-01"},
             )
 
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()["data"]
-        self.assertEqual(payload["ingestion_id"], "client_ingest-01")
-        self.assertTrue((Path(tmpdir) / "client_ingest-01" / "merged_graph.json").exists())
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()["data"]
+            self.assertEqual(payload["ingestion_id"], "client_ingest-01")
+            self.assertTrue((Path(payload["artifacts_path"]) / "merged_graph.json").exists())
 
     def test_get_ingestion_events_rejects_unsafe_ingestion_id(self):
-        response = self.client.get("/ingest/../events")
+        response = self.client.get("/ingest/bad.id/events")
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "invalid_ingestion_id")
 
