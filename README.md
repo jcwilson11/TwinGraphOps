@@ -41,20 +41,22 @@ flowchart LR
 The repository uses GitHub Actions to model a deployment pipeline:
 
 1. Developer pushes code or opens a pull request.
-2. CI runs Python unit tests for the API.
-3. CI builds Docker images with `docker compose build`.
-4. CI starts the full stack with ephemeral secret files.
-5. CI verifies:
+2. CI runs Python unit tests for the API and a dedicated frontend test suite.
+3. CI performs a local Docker Compose build and smoke test for source validation.
+4. Pushes to `twin-*` build the local `api` and `frontend` Docker images and run Trivy image scans against those local tags before smoke tests.
+5. Pushes to `main` and `dev` also build `api` and `frontend` once, publish them to Amazon ECR with immutable `sha-<commit>` tags, and capture the resulting digest refs.
+6. CI verifies:
    - API liveness: `/health`
    - API readiness: `/ready`
    - API metrics: `/metrics`
    - frontend health: `/healthz`
-6. Security workflows run separately for:
+7. Security workflows run separately for:
    - secret scanning with Gitleaks
    - static analysis with CodeQL
-   - filesystem and image vulnerability scanning with Trivy
-7. Pushes to `dev` run a **staging-like promotion** job.
-8. Pushes to `main` run a **production-like promotion** job gated by the GitHub `production` environment.
+   - filesystem vulnerability scanning with Trivy
+8. Pushes to `main` and `dev` run Trivy image scans against the exact published digest refs after the publish step completes.
+9. Pushes to `dev` run a **staging-like promotion** job using those same digest refs.
+10. Pushes to `main` run a **production-like promotion** job gated by the GitHub `production` environment, again using those same digest refs.
 
 GitHub branch protection is designed to mark the CI, Trivy, Gitleaks, and CodeQL workflows as required checks so the separate security workflows act as promotion gates.
 
@@ -65,7 +67,7 @@ The project uses the same container topology across local development, CI valida
 | Environment | Purpose | How it is represented |
 | --- | --- | --- |
 | `local` | developer workstation | `docker compose up --build` |
-| `ci` | automated verification | GitHub Actions smoke test job |
+| `ci` | automated verification | GitHub Actions local validation plus exact-image smoke test |
 | `staging` | pre-release promotion | `deploy-staging` workflow job |
 | `production` | real cloud runtime | EC2 + Docker Compose + ECR + SSM |
 
@@ -79,7 +81,8 @@ This project treats security as part of delivery, adopting the DevSecOps mindset
 | --- | --- | --- |
 | Secret detection | `secret-scan.yml` with Gitleaks | Prevent accidental credential commits |
 | Static analysis | `codeql.yml` | Detect common code-level security issues |
-| Dependency and image scanning | `trivy.yml` | Detect vulnerable packages and container layers |
+| Filesystem vulnerability scanning | `trivy.yml` | Detect vulnerable packages in the source tree |
+| Local and published image scanning | `.github/workflows/ci.yml` with Trivy | Scan local `twin-*` image builds before promotion and scan exact digest refs on `main`/`dev` |
 | Secret isolation | `infra/secrets/*.txt` ignored in git | Keep operational credentials out of version control |
 | Environment-based secrets | AWS Secrets Manager plus GitHub Actions OIDC | Keep GitHub out of long-lived secret storage while separating environments |
 
@@ -104,7 +107,7 @@ These files are part of the system architecture because they define how software
 Additional AWS infrastructure is captured in:
 
 - `infra/aws/ec2-compose-stack.yml`: single-host EC2 stack with SSM and ECR access
-- `.github/workflows/release.yml`: tag-driven ECR publish, EC2 deployment, and GitHub release
+- `.github/workflows/release.yml`: tag-driven digest resolution, EC2 deployment, and GitHub release
 
 ## Health, Readiness, And Monitoring
 
@@ -259,11 +262,14 @@ curl "http://localhost:8000/risk?component_id=api"
 
 ## Test Coverage
 
-The repo includes API unit tests to show that CI verifies more than container startup.
+The repo includes API unit tests and frontend tests so CI verifies more than container startup.
 
 Run locally:
 
 ```bash
+npm --prefix frontend ci --no-audit
+npm --prefix frontend test
+
 python -m pip install -r api/requirements.txt
 python -m unittest discover -s api/tests -v
 npm --prefix frontend test
@@ -271,6 +277,10 @@ npm --prefix frontend test
 
 The tests cover:
 
+- frontend server endpoints such as `/healthz` and `/config.js`
+- frontend route/page rendering for the upload, processing, and workspace views
+- frontend upload validation behavior for unsupported and oversize files
+- frontend API client error handling for malformed JSON, timeout, and network failures
 - root endpoint contract
 - readiness success path
 - readiness failure behavior
@@ -284,8 +294,9 @@ The tests cover:
 TwinGraphOps now has a real production deployment path that builds directly on the localhost container model:
 
 - localhost and CI keep using the existing Compose stack for fast validation
-- tagged releases build immutable `api` and `frontend` images and push them to Amazon ECR
-- AWS Systems Manager tells the production EC2 host to pull the tagged images and restart `docker-compose.cloud.yml`
+- pushes to `main` and `dev` publish immutable `sha-<commit>` images to Amazon ECR after local validation
+- tagged releases resolve those previously published digest refs instead of rebuilding from source
+- AWS Systems Manager tells the production EC2 host to pull those exact digest refs and restart `docker-compose.cloud.yml`
 - the EC2 host loads Neo4j and Gemini credentials from AWS Secrets Manager at deploy time
 - the EC2 host reads the production Gemini model from Systems Manager Parameter Store at `/twingraphops/production/gemini_model`
 
@@ -305,12 +316,16 @@ The `deploy-staging` job:
 
 The `TwinGraphOps Release` workflow is triggered by a version tag such as `v1.0.0` and:
 
+- can only be started by pushing a `v*` tag; there is no manual arbitrary-ref production dispatch
 - is tied to the GitHub `production` environment
 - uses GitHub Actions OIDC to assume an AWS role
-- runs API tests and builds the frontend
-- builds release images and pushes them to Amazon ECR
+- runs API tests, frontend tests, and then builds the frontend
+- resolves previously published `sha-<commit>` images from Amazon ECR into immutable digest refs
+- optionally aliases those same digests to the release tag and `latest`
 - deploys the tagged ref to the EC2 production host with AWS Systems Manager
+- resolves the previous successful production release from GitHub release metadata before deploying
 - verifies final health, readiness, and metrics checks on the instance
+- automatically rolls back to the previous known-good digest refs if the production deployment fails
 - publishes the GitHub Release after deployment succeeds
 
 ### GitHub Actions AWS configuration
@@ -331,7 +346,18 @@ Optional release variables:
 
 The staging and production jobs use `aws-actions/configure-aws-credentials` with OIDC, then run `infra/scripts/bootstrap-secrets-from-aws.sh` to write the existing secret files consumed by Docker Compose and the API.
 
-The tagged release workflow uses the same OIDC model, but deploys the production host with `infra/scripts/deploy-ec2-compose.sh` and the `docker-compose.cloud.yml` topology.
+Pushes to `twin-*` do not publish images; they only build local tags and run image vulnerability scans inside CI. Pushes to `main` and `dev` publish immutable `sha-<commit>` tags into the existing ECR repos and record the resulting digest refs in an `image-manifest` artifact.
+
+Because those promotable images are published into the existing production ECR repositories, the CI publish path uses `PROD_AWS_ROLE_ARN` for ECR write access. The staging deployment simulation still uses `STAGING_AWS_ROLE_ARN`, so that staging role must be able to authenticate to ECR and pull from the shared API/frontend repositories.
+
+At minimum, the staging role needs:
+
+- `ecr:GetAuthorizationToken` on `*`
+- `ecr:BatchCheckLayerAvailability` on the shared ECR repositories
+- `ecr:BatchGetImage` on the shared ECR repositories
+- `ecr:GetDownloadUrlForLayer` on the shared ECR repositories
+
+The tagged release workflow uses the same OIDC model, resolves those previously published digest refs from ECR, and deploys the production host with `infra/scripts/deploy-ec2-compose.sh` and the `docker-compose.cloud.yml` topology. A production tag is therefore the approval boundary: it must point to a commit whose CI run already published promotable images.
 
 The deploy script uses `GEMINI_MODEL` if it is provided explicitly. Otherwise, it reads `/twingraphops/production/gemini_model` from AWS Systems Manager Parameter Store and writes that value into the generated cloud env file before Docker Compose restarts the API.
 
@@ -339,32 +365,25 @@ For the AWS bootstrap steps and CloudFormation template, see `infra/aws/README.m
 
 ## Rollback Procedure
 
-This repo documents rollback as a repeatable operator action rather than an automated cloud rollback.
+Production rollback is now operationalized in two ways:
 
-### If a deployment-like promotion fails
+- each successful production release publishes `production-release-metadata.json` as a GitHub release asset
+- that asset records the release tag, commit SHA, API digest ref, frontend digest ref, and deployment timestamp
+- before a new production deploy starts, the workflow resolves the most recent prior release with that metadata asset
+- if the new production deployment fails after the rollout command is sent, the workflow automatically redeploys that previous known-good API/frontend digest pair through the same `infra/scripts/deploy-ec2-compose.sh` path
+- operators can also trigger the `TwinGraphOps Manual Rollback` workflow and supply a previous production release tag to redeploy that exact recorded digest pair on demand
+- if no previous successful production release metadata exists yet, the workflow fails loudly instead of attempting a fake rollback
 
-1. Inspect the GitHub Actions logs for the failing job.
-2. Inspect service logs:
-   - `docker compose logs api`
-   - `docker compose logs frontend`
-   - `docker compose logs neo4j`
-3. Check:
-   - `GET /health`
-   - `GET /ready`
-   - `GET /health/neo4j`
-   - `GET /metrics`
-4. Stop the stack:
+Operator follow-up stays simple:
 
-```bash
-docker compose down -v
-```
-
-5. Re-deploy the last known-good commit:
-
-```bash
-git checkout <known-good-commit>
-docker compose up --build
-```
+1. Inspect the failed release job, automatic rollback job, or manual rollback job logs in GitHub Actions.
+2. Confirm the rollback target release tag and digest refs shown in the workflow summary.
+3. Verify the restored production instance:
+   - `GET /healthz`
+   - `GET /api/health`
+   - `GET /api/ready`
+   - `GET /api/metrics`
+4. If both deploy and rollback fail, investigate the EC2 host and rerun the manual rollback workflow with the last known-good release tag after fixing the root cause.
 
 ## Evidence Table
 
@@ -379,4 +398,4 @@ docker compose up --build
 | Secret isolation | `.gitignore`, `infra/scripts/setup-local-secrets.sh`, `infra/scripts/bootstrap-secrets-from-aws.sh` |
 | Health and readiness | `api/main.py`, `frontend/server.js` |
 | Metrics visibility | `api/main.py` |
-| Rollback story | this README |
+| Rollback automation | `.github/workflows/release.yml`, `.github/workflows/manual-rollback.yml`, `infra/scripts/release_rollback.py`, `infra/tests/test_release_rollback.py` |
