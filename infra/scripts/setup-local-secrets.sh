@@ -36,4 +36,13 @@ if [[ -z "${GEMINI_API_KEY}" ]]; then
   GEMINI_API_KEY="replace-me"
 fi
 
+if [[ -z "${GRAFANA_ADMIN_USER:-}" ]]; then
+  read -r -p "GRAFANA_ADMIN_USER: " GRAFANA_ADMIN_USER
+fi
+
+if [[ -z "${GRAFANA_ADMIN_PASSWORD:-}" ]]; then
+  read -r -s -p "GRAFANA_ADMIN_PASSWORD: " GRAFANA_ADMIN_PASSWORD
+  echo
+fi
+
 bash "$SCRIPT_DIR/write-secret-files.sh"

@@ -142,7 +142,8 @@ for i in {1..30}; do
   if check_url http://127.0.0.1/healthz \
     && check_url http://127.0.0.1/api/health \
     && check_url http://127.0.0.1/api/ready \
-    && check_url http://127.0.0.1/api/metrics; then
+    && check_url http://127.0.0.1/api/metrics \
+    && check_url http://127.0.0.1/grafana/api/health; then
     echo "Deployment checks passed."
     exit 0
   fi

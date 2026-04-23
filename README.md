@@ -175,7 +175,9 @@ Expected AWS secret JSON:
 {
   "neo4j_user": "neo4j",
   "neo4j_password": "replace-with-real-password",
-  "gemini_api_key": "replace-with-real-api-key"
+  "gemini_api_key": "replace-with-real-api-key",
+  "grafana_admin_user": "replace-with-real-admin-user",
+  "grafana_admin_password": "replace-with-real-admin-password"
 }
 ```
 
@@ -201,7 +203,7 @@ Requirements:
 
 - AWS CLI installed
 - an authenticated AWS session able to read the target secret
-- a Secrets Manager secret whose `SecretString` is JSON with `neo4j_password` and `gemini_api_key` keys (`neo4j_user` defaults to `neo4j`)
+- a Secrets Manager secret whose `SecretString` is JSON with `neo4j_password`, `gemini_api_key`, `grafana_admin_user`, and `grafana_admin_password` keys (`neo4j_user` defaults to `neo4j`)
 
 Required files:
 
@@ -209,6 +211,8 @@ Required files:
 - `infra/secrets/neo4j_user.txt`
 - `infra/secrets/neo4j_password.txt`
 - `infra/secrets/gemini_api_key.txt`
+- `infra/secrets/grafana_admin_user.txt`
+- `infra/secrets/grafana_admin_password.txt`
 
 ### 2. Start the stack
 
@@ -230,6 +234,8 @@ Open:
 - Grafana: `http://localhost:3001`
 - Prometheus: `http://localhost:9090`
 ```
+
+Grafana now uses the secret-backed admin credentials from your local bootstrap or manual secret setup; there is no longer a hardcoded repo default login.
 
 ### 4. Upload a manual for extraction
 
@@ -297,10 +303,10 @@ TwinGraphOps now has a real production deployment path that builds directly on t
 - pushes to `main` and `dev` publish immutable `sha-<commit>` images to Amazon ECR after local validation
 - tagged releases resolve those previously published digest refs instead of rebuilding from source
 - AWS Systems Manager tells the production EC2 host to pull those exact digest refs and restart `docker-compose.cloud.yml`
-- the EC2 host loads Neo4j and Gemini credentials from AWS Secrets Manager at deploy time
+- the EC2 host loads Neo4j, Gemini, and Grafana credentials from AWS Secrets Manager at deploy time
 - the EC2 host reads the production Gemini model from Systems Manager Parameter Store at `/twingraphops/production/gemini_model`
 
-The production runtime is intentionally simple and budget-aware: one EC2 instance runs `nginx`, `frontend`, `api`, and `neo4j`, which keeps the first cloud release inside a small-credit footprint while still being a real AWS deployment.
+The production runtime is intentionally simple and budget-aware: one EC2 instance runs `nginx`, `frontend`, `api`, `neo4j`, `prometheus`, and `grafana`, which keeps the first cloud release inside a small-credit footprint while still being a real AWS deployment.
 
 ### Staging-like promotion
 
@@ -309,7 +315,7 @@ The `deploy-staging` job:
 - uses GitHub Actions OIDC to assume an AWS role
 - pulls the staging secret from AWS Secrets Manager into `infra/secrets/*.txt`
 - starts the Compose stack with `TWIN_ENV=staging`
-- verifies liveness, readiness, frontend health, and metrics
+- verifies liveness, readiness, frontend health, metrics, and Grafana health
 - records evidence in workflow logs
 
 ### Production release
@@ -361,6 +367,18 @@ The tagged release workflow uses the same OIDC model, resolves those previously 
 
 The deploy script uses `GEMINI_MODEL` if it is provided explicitly. Otherwise, it reads `/twingraphops/production/gemini_model` from AWS Systems Manager Parameter Store and writes that value into the generated cloud env file before Docker Compose restarts the API.
 
+All environment secrets now share the same JSON schema for `twingraphops/local`, `twingraphops/staging`, and `twingraphops/production`:
+
+```json
+{
+  "neo4j_user": "neo4j",
+  "neo4j_password": "replace-with-real-password",
+  "gemini_api_key": "replace-with-real-api-key",
+  "grafana_admin_user": "replace-with-real-admin-user",
+  "grafana_admin_password": "replace-with-real-admin-password"
+}
+```
+
 For the AWS bootstrap steps and CloudFormation template, see `infra/aws/README.md`.
 
 ## Rollback Procedure
@@ -383,6 +401,7 @@ Operator follow-up stays simple:
    - `GET /api/health`
    - `GET /api/ready`
    - `GET /api/metrics`
+   - `GET /grafana/api/health`
 4. If both deploy and rollback fail, investigate the EC2 host and rerun the manual rollback workflow with the last known-good release tag after fixing the root cause.
 
 ## Evidence Table

@@ -99,13 +99,21 @@ services:
     ports:
       - "3001:3000"
     environment:
-      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
       GF_USERS_ALLOW_SIGN_UP: "false"
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command: |
+      export GF_SECURITY_ADMIN_USER="$(cat /run/secrets/grafana_admin_user)"
+      export GF_SECURITY_ADMIN_PASSWORD="$(cat /run/secrets/grafana_admin_password)"
+      exec /run.sh
     volumes:
       - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./infra/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
+    secrets:
+      - grafana_admin_user
+      - grafana_admin_password
     depends_on:
       prometheus:
         condition: service_started
@@ -126,3 +134,7 @@ secrets:
     file: ./infra/secrets/neo4j_password.txt
   gemini_api_key:
     file: ./infra/secrets/gemini_api_key.txt
+  grafana_admin_user:
+    file: ./infra/secrets/grafana_admin_user.txt
+  grafana_admin_password:
+    file: ./infra/secrets/grafana_admin_password.txt

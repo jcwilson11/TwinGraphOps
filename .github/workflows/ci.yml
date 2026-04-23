@@ -82,6 +82,8 @@ jobs:
           printf '%s' 'neo4j' > infra/secrets/neo4j_user.txt
           printf '%s' 'ci-password' > infra/secrets/neo4j_password.txt
           printf '%s' 'ci-gemini-placeholder' > infra/secrets/gemini_api_key.txt
+          printf '%s' 'ci-grafana-admin' > infra/secrets/grafana_admin_user.txt
+          printf '%s' 'ci-grafana-password' > infra/secrets/grafana_admin_password.txt
 
       - name: Compose up (smoke test)
         env:
@@ -103,7 +105,8 @@ jobs:
             if check_url http://localhost:8000/health \
               && check_url http://localhost:8000/ready \
               && check_url http://localhost:8000/metrics \
-              && check_url http://localhost:3000/healthz; then
+              && check_url http://localhost:3000/healthz \
+              && check_url http://localhost:3001/api/health; then
               echo "Smoke checks passed"
               exit 0
             fi
@@ -128,7 +131,7 @@ jobs:
         if: always()
         run: |
           docker compose down -v
-          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
+          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt
 
   publish-promotable-images:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
@@ -299,7 +302,7 @@ jobs:
 
       - name: Cleanup staging secret files
         if: always()
-        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
+        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt
 
   validate-staging-config-pr:
     if: |
@@ -320,6 +323,8 @@ jobs:
           printf '%s' 'neo4j' > infra/secrets/neo4j_user.txt
           printf '%s' 'staging-pr-password' > infra/secrets/neo4j_password.txt
           printf '%s' 'staging-pr-gemini-placeholder' > infra/secrets/gemini_api_key.txt
+          printf '%s' 'staging-pr-grafana-admin' > infra/secrets/grafana_admin_user.txt
+          printf '%s' 'staging-pr-grafana-password' > infra/secrets/grafana_admin_password.txt
 
       - name: Validate compose config (staging PR)
         env:
@@ -334,7 +339,7 @@ jobs:
 
       - name: Cleanup staging secret files
         if: always()
-        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
+        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt
 
   validate-production-config:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -383,7 +388,7 @@ jobs:
 
       - name: Cleanup production secret files
         if: always()
-        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
+        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt
 
   validate-production-config-pr:
     if: |
@@ -404,6 +409,8 @@ jobs:
           printf '%s' 'neo4j' > infra/secrets/neo4j_user.txt
           printf '%s' 'production-pr-password' > infra/secrets/neo4j_password.txt
           printf '%s' 'production-pr-gemini-placeholder' > infra/secrets/gemini_api_key.txt
+          printf '%s' 'production-pr-grafana-admin' > infra/secrets/grafana_admin_user.txt
+          printf '%s' 'production-pr-grafana-password' > infra/secrets/grafana_admin_password.txt
 
       - name: Validate compose config (production PR)
         env:
@@ -418,7 +425,7 @@ jobs:
 
       - name: Cleanup production secret files
         if: always()
-        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
+        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt
 
   verify-promotable-images:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
@@ -452,6 +459,8 @@ jobs:
           printf '%s' 'neo4j' > infra/secrets/neo4j_user.txt
           printf '%s' 'ci-password' > infra/secrets/neo4j_password.txt
           printf '%s' 'ci-gemini-placeholder' > infra/secrets/gemini_api_key.txt
+          printf '%s' 'ci-grafana-admin' > infra/secrets/grafana_admin_user.txt
+          printf '%s' 'ci-grafana-password' > infra/secrets/grafana_admin_password.txt
 
       - name: Pull published images
         env:
@@ -482,7 +491,8 @@ jobs:
             if check_url http://localhost:8000/health \
               && check_url http://localhost:8000/ready \
               && check_url http://localhost:8000/metrics \
-              && check_url http://localhost:3000/healthz; then
+              && check_url http://localhost:3000/healthz \
+              && check_url http://localhost:3001/api/health; then
               echo "Published image smoke checks passed"
               exit 0
             fi
@@ -504,7 +514,7 @@ jobs:
         if: always()
         run: |
           docker compose down -v
-          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
+          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt
 
   deploy-staging:
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
@@ -570,7 +580,8 @@ jobs:
             if check_url http://localhost:8000/health \
               && check_url http://localhost:8000/ready \
               && check_url http://localhost:8000/metrics \
-              && check_url http://localhost:3000/healthz; then
+              && check_url http://localhost:3000/healthz \
+              && check_url http://localhost:3001/api/health; then
               echo "Staging promotion checks passed"
               exit 0
             fi
@@ -588,6 +599,7 @@ jobs:
         run: |
           docker compose ps
           curl -fsS http://localhost:8000/metrics
+          curl -fsS http://localhost:3001/api/health
 
       - name: Show staging logs on failure
         if: failure()
@@ -597,7 +609,7 @@ jobs:
         if: always()
         run: |
           docker compose down -v
-          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
+          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt
 
   deploy-production:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -663,7 +675,8 @@ jobs:
             if check_url http://localhost:8000/health \
               && check_url http://localhost:8000/ready \
               && check_url http://localhost:8000/metrics \
-              && check_url http://localhost:3000/healthz; then
+              && check_url http://localhost:3000/healthz \
+              && check_url http://localhost:3001/api/health; then
               echo "Production promotion checks passed"
               exit 0
             fi
@@ -681,6 +694,7 @@ jobs:
         run: |
           docker compose ps
           curl -fsS http://localhost:8000/metrics
+          curl -fsS http://localhost:3001/api/health
 
       - name: Show production logs on failure
         if: failure()
@@ -690,4 +704,4 @@ jobs:
         if: always()
         run: |
           docker compose down -v
-          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
+          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt

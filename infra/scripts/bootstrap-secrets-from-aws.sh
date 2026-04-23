@@ -55,6 +55,8 @@ def read_value(*keys: str, default: str = "") -> str:
 print(read_value("neo4j_user", "NEO4J_USER", default="neo4j"))
 print(read_value("neo4j_password", "NEO4J_PASSWORD"))
 print(read_value("gemini_api_key", "GEMINI_API_KEY"))
+print(read_value("grafana_admin_user", "GRAFANA_ADMIN_USER"))
+print(read_value("grafana_admin_password", "GRAFANA_ADMIN_PASSWORD"))
 PY
 )"
 
@@ -65,7 +67,7 @@ done <<EOF
 $SECRET_OUTPUT
 EOF
 
-if [[ "${#SECRET_VALUES[@]}" -ne 3 ]]; then
+if [[ "${#SECRET_VALUES[@]}" -ne 5 ]]; then
   echo "Failed to extract the expected secret fields from '$AWS_SECRET_ID'." >&2
   exit 1
 fi
@@ -73,6 +75,8 @@ fi
 export NEO4J_USER="${SECRET_VALUES[0]}"
 export NEO4J_PASSWORD="${SECRET_VALUES[1]}"
 export GEMINI_API_KEY="${SECRET_VALUES[2]}"
+export GRAFANA_ADMIN_USER="${SECRET_VALUES[3]}"
+export GRAFANA_ADMIN_PASSWORD="${SECRET_VALUES[4]}"
 export SECRETS_DIR="${SECRETS_DIR:-$ROOT_DIR/infra/secrets}"
 
 bash "$SCRIPT_DIR/write-secret-files.sh"
