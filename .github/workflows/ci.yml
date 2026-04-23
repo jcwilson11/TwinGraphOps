@@ -105,8 +105,7 @@ jobs:
             if check_url http://localhost:8000/health \
               && check_url http://localhost:8000/ready \
               && check_url http://localhost:8000/metrics \
-              && check_url http://localhost:3000/healthz \
-              && check_url http://localhost:3001/api/health; then
+              && check_url http://localhost:3000/healthz; then
               echo "Smoke checks passed"
               exit 0
             fi
@@ -118,6 +117,34 @@ jobs:
           echo "Smoke checks failed"
           docker compose ps
           docker compose logs --tail=100
+          exit 1
+
+      - name: Verify Grafana health
+        run: |
+          check_url() {
+            local url="$1"
+            if ! curl -fsS "$url" > /dev/null; then
+              echo "Check failed: $url"
+              return 1
+            fi
+          }
+
+          for i in {1..60}; do
+            echo "Grafana health attempt $i/60"
+            if check_url http://localhost:3001/api/health; then
+              echo "Grafana health check passed"
+              exit 0
+            fi
+            if [ "$i" -eq 20 ] || [ "$i" -eq 40 ]; then
+              docker compose ps
+              docker compose logs --tail=50 grafana
+            fi
+            sleep 3
+          done
+
+          echo "Grafana health check failed"
+          docker compose ps
+          docker compose logs --tail=100 grafana
           exit 1
 
       - name: Show running services
@@ -491,8 +518,7 @@ jobs:
             if check_url http://localhost:8000/health \
               && check_url http://localhost:8000/ready \
               && check_url http://localhost:8000/metrics \
-              && check_url http://localhost:3000/healthz \
-              && check_url http://localhost:3001/api/health; then
+              && check_url http://localhost:3000/healthz; then
               echo "Published image smoke checks passed"
               exit 0
             fi
@@ -504,6 +530,34 @@ jobs:
           echo "Published image smoke checks failed"
           docker compose ps
           docker compose logs --tail=100
+          exit 1
+
+      - name: Verify published image Grafana health
+        run: |
+          check_url() {
+            local url="$1"
+            if ! curl -fsS "$url" > /dev/null; then
+              echo "Check failed: $url"
+              return 1
+            fi
+          }
+
+          for i in {1..60}; do
+            echo "Published image Grafana attempt $i/60"
+            if check_url http://localhost:3001/api/health; then
+              echo "Published image Grafana health check passed"
+              exit 0
+            fi
+            if [ "$i" -eq 20 ] || [ "$i" -eq 40 ]; then
+              docker compose ps
+              docker compose logs --tail=50 grafana
+            fi
+            sleep 3
+          done
+
+          echo "Published image Grafana health check failed"
+          docker compose ps
+          docker compose logs --tail=100 grafana
           exit 1
 
       - name: Show compose logs on failure
@@ -580,8 +634,7 @@ jobs:
             if check_url http://localhost:8000/health \
               && check_url http://localhost:8000/ready \
               && check_url http://localhost:8000/metrics \
-              && check_url http://localhost:3000/healthz \
-              && check_url http://localhost:3001/api/health; then
+              && check_url http://localhost:3000/healthz; then
               echo "Staging promotion checks passed"
               exit 0
             fi
@@ -593,6 +646,34 @@ jobs:
           echo "Staging promotion checks failed"
           docker compose ps
           docker compose logs --tail=100
+          exit 1
+
+      - name: Verify staging Grafana health
+        run: |
+          check_url() {
+            local url="$1"
+            if ! curl -fsS "$url" > /dev/null; then
+              echo "Check failed: $url"
+              return 1
+            fi
+          }
+
+          for i in {1..60}; do
+            echo "Staging Grafana attempt $i/60"
+            if check_url http://localhost:3001/api/health; then
+              echo "Staging Grafana health check passed"
+              exit 0
+            fi
+            if [ "$i" -eq 20 ] || [ "$i" -eq 40 ]; then
+              docker compose ps
+              docker compose logs --tail=50 grafana
+            fi
+            sleep 3
+          done
+
+          echo "Staging Grafana health check failed"
+          docker compose ps
+          docker compose logs --tail=100 grafana
           exit 1
 
       - name: Record staging deployment evidence
@@ -675,8 +756,7 @@ jobs:
             if check_url http://localhost:8000/health \
               && check_url http://localhost:8000/ready \
               && check_url http://localhost:8000/metrics \
-              && check_url http://localhost:3000/healthz \
-              && check_url http://localhost:3001/api/health; then
+              && check_url http://localhost:3000/healthz; then
               echo "Production promotion checks passed"
               exit 0
             fi
@@ -688,6 +768,34 @@ jobs:
           echo "Production promotion checks failed"
           docker compose ps
           docker compose logs --tail=100
+          exit 1
+
+      - name: Verify production Grafana health
+        run: |
+          check_url() {
+            local url="$1"
+            if ! curl -fsS "$url" > /dev/null; then
+              echo "Check failed: $url"
+              return 1
+            fi
+          }
+
+          for i in {1..60}; do
+            echo "Production Grafana attempt $i/60"
+            if check_url http://localhost:3001/api/health; then
+              echo "Production Grafana health check passed"
+              exit 0
+            fi
+            if [ "$i" -eq 20 ] || [ "$i" -eq 40 ]; then
+              docker compose ps
+              docker compose logs --tail=50 grafana
+            fi
+            sleep 3
+          done
+
+          echo "Production Grafana health check failed"
+          docker compose ps
+          docker compose logs --tail=100 grafana
           exit 1
 
       - name: Record production deployment evidence
