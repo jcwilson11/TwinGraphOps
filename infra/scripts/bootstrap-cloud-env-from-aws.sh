@@ -51,12 +51,20 @@ def read_value(*keys: str, default: str = "") -> str:
 neo4j_user = read_value("neo4j_user", "NEO4J_USER", default="neo4j") or "neo4j"
 neo4j_password = read_value("neo4j_password", "NEO4J_PASSWORD")
 gemini_api_key = read_value("gemini_api_key", "GEMINI_API_KEY")
+grafana_admin_user = read_value("grafana_admin_user", "GRAFANA_ADMIN_USER")
+grafana_admin_password = read_value("grafana_admin_password", "GRAFANA_ADMIN_PASSWORD")
 
 if not neo4j_password:
     raise SystemExit("The secret must contain neo4j_password (or NEO4J_PASSWORD).")
 
 if not gemini_api_key:
     raise SystemExit("The secret must contain gemini_api_key (or GEMINI_API_KEY).")
+
+if not grafana_admin_user:
+    raise SystemExit("The secret must contain grafana_admin_user (or GRAFANA_ADMIN_USER).")
+
+if not grafana_admin_password:
+    raise SystemExit("The secret must contain grafana_admin_password (or GRAFANA_ADMIN_PASSWORD).")
 
 
 def emit_export(key: str, value: str) -> None:
@@ -67,4 +75,6 @@ emit_export("NEO4J_USER", neo4j_user)
 emit_export("NEO4J_PASSWORD", neo4j_password)
 emit_export("NEO4J_AUTH", f"{neo4j_user}/{neo4j_password}")
 emit_export("GEMINI_API_KEY", gemini_api_key)
+emit_export("GF_SECURITY_ADMIN_USER", grafana_admin_user)
+emit_export("GF_SECURITY_ADMIN_PASSWORD", grafana_admin_password)
 PY

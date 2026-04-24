@@ -11,7 +11,7 @@ export const appConfig = {
     readNumber(runtimeConfig.MAX_UPLOAD_MB || import.meta.env.VITE_MAX_UPLOAD_MB, 10) * 1024 * 1024,
   processingTimeoutMs: readNumber(
     runtimeConfig.PROCESSING_TIMEOUT_MS || import.meta.env.VITE_PROCESSING_TIMEOUT_MS,
-    90000
+    300000
   ),
   environment: runtimeConfig.APP_ENV || 'local',
 };

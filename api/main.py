@@ -1,16 +1,21 @@
 import json
+import logging
 import os
+import re
 import time
+import traceback
 import uuid
+from collections import deque
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Lock
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse
 from neo4j import GraphDatabase
+from threading import Lock
 
 from gemini_client import GeminiExtractionError, GeminiGraphExtractor
 from graph_pipeline import (
@@ -24,6 +29,7 @@ from graph_pipeline import (
     merge_chunk_graphs,
 )
 from models import ChunkGraph, GraphEdge, GraphNode, MergedGraph, model_dump_compat
+from observability import Observability, normalize_http_path
 
 app = FastAPI(title="TwinGraphOps API")
 app.add_middleware(
@@ -37,11 +43,186 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-APP_START_TIME = time.time()
-METRICS_LOCK = Lock()
-REQUEST_METRICS = {"total": 0, "by_path": {}}
 DRIVER_LOCK = Lock()
 DRIVER = None
+OBSERVABILITY = Observability()
+REQUEST_ID_CTX: ContextVar[str] = ContextVar("request_id", default="-")
+
+LOGGER = logging.getLogger("twingraphops")
+LOGGER.setLevel(logging.INFO)
+INGESTION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+ARTIFACT_FILENAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+ARTIFACT_DIR_NAMESPACE = uuid.UUID("6aef8b2d-51f2-4f8a-9519-5c6dbfe5375a")
+
+if not LOGGER.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    LOGGER.addHandler(handler)
+
+
+def _to_event_message(event: str, fields: dict[str, Any]) -> str:
+    if event == "ingest_started":
+        return f"Started processing {fields.get('filename', 'document')}."
+    if event == "ingest_chunking_completed":
+        return f"Split the document into {fields.get('chunks_total', 0)} chunk(s)."
+    if event == "ingest_chunk_started":
+        return f"Processing chunk {fields.get('chunk_index', '?')}."
+    if event == "ingest_chunk_succeeded":
+        return (
+            f"Chunk {fields.get('chunk_index', '?')} produced "
+            f"{fields.get('node_count', 0)} node(s) and {fields.get('edge_count', 0)} edge(s)."
+        )
+    if event == "ingest_chunk_failed":
+        return f"Chunk {fields.get('chunk_index', '?')} failed: {fields.get('error_message', 'unknown error')}."
+    if event == "graph_merge_completed":
+        return (
+            f"Merged graph with {fields.get('nodes_created', 0)} node(s) and "
+            f"{fields.get('edges_created', 0)} edge(s)."
+        )
+    if event == "graph_persisted":
+        return "Saved the graph to Neo4j."
+    if event == "graph_persist_failed":
+        return f"Failed to save the graph: {fields.get('error_message', 'unknown error')}."
+    if event == "ingest_completed":
+        return "Processing completed successfully."
+    if event == "ingest_configuration_failed":
+        return f"Configuration failed: {fields.get('error_message', 'unknown error')}."
+    if event == "graph_merge_failed":
+        return f"Graph merge failed: {fields.get('error_message', 'unknown error')}."
+    return event.replace("_", " ").capitalize()
+
+
+class IngestionEventStore:
+    def __init__(self, max_events: int = 50) -> None:
+        self._lock = Lock()
+        self._max_events = max_events
+        self._entries: dict[str, dict[str, Any]] = {}
+
+    def register(self, ingestion_id: str, filename: str | None = None) -> None:
+        with self._lock:
+            entry = self._entries.setdefault(
+                ingestion_id,
+                {
+                    "ingestion_id": ingestion_id,
+                    "state": "pending",
+                    "filename": filename,
+                    "chunks_total": None,
+                    "current_chunk": None,
+                    "started_at": None,
+                    "completed_at": None,
+                    "latest_event": "Waiting for ingestion to start.",
+                    "events": deque(maxlen=self._max_events),
+                },
+            )
+            if filename:
+                entry["filename"] = filename
+
+    def append(self, payload: dict[str, Any]) -> None:
+        ingestion_id = str(payload.get("ingestion_id") or "").strip()
+        if not ingestion_id:
+            return
+
+        event = str(payload.get("event") or "")
+        fields = {
+            key: value
+            for key, value in payload.items()
+            if key
+            not in {"timestamp", "level", "service", "environment", "event", "request_id", "ingestion_id", "traceback"}
+        }
+        message = _to_event_message(event, fields)
+
+        with self._lock:
+            entry = self._entries.setdefault(
+                ingestion_id,
+                {
+                    "ingestion_id": ingestion_id,
+                    "state": "pending",
+                    "filename": fields.get("filename"),
+                    "chunks_total": None,
+                    "current_chunk": None,
+                    "started_at": None,
+                    "completed_at": None,
+                    "latest_event": "Waiting for ingestion to start.",
+                    "events": deque(maxlen=self._max_events),
+                },
+            )
+
+            if fields.get("filename"):
+                entry["filename"] = fields["filename"]
+            if fields.get("chunks_total") is not None:
+                entry["chunks_total"] = fields["chunks_total"]
+            if fields.get("chunk_index") is not None:
+                entry["current_chunk"] = fields["chunk_index"]
+
+            if event == "ingest_started":
+                entry["state"] = "running"
+                entry["started_at"] = payload.get("timestamp")
+            elif event == "ingest_completed":
+                entry["state"] = "succeeded"
+                entry["completed_at"] = payload.get("timestamp")
+            elif event in {
+                "ingest_chunk_failed",
+                "graph_merge_failed",
+                "graph_persist_failed",
+                "ingest_configuration_failed",
+            }:
+                entry["state"] = "failed"
+                entry["completed_at"] = payload.get("timestamp")
+
+            entry["latest_event"] = message
+            entry["events"].append(
+                {
+                    "timestamp": payload.get("timestamp"),
+                    "level": payload.get("level"),
+                    "event": event,
+                    "message": message,
+                    "chunk_index": fields.get("chunk_index"),
+                }
+            )
+
+    def get(self, ingestion_id: str) -> dict[str, Any]:
+        with self._lock:
+            entry = self._entries.get(ingestion_id)
+            if not entry:
+                return {
+                    "ingestion_id": ingestion_id,
+                    "state": "pending",
+                    "filename": None,
+                    "chunks_total": None,
+                    "current_chunk": None,
+                    "started_at": None,
+                    "completed_at": None,
+                    "latest_event": "Waiting for ingestion to start.",
+                    "events": [],
+                }
+            return {
+                "ingestion_id": entry["ingestion_id"],
+                "state": entry["state"],
+                "filename": entry["filename"],
+                "chunks_total": entry["chunks_total"],
+                "current_chunk": entry["current_chunk"],
+                "started_at": entry["started_at"],
+                "completed_at": entry["completed_at"],
+                "latest_event": entry["latest_event"],
+                "events": list(entry["events"]),
+            }
+
+
+INGESTION_EVENTS = IngestionEventStore()
+
+
+def log_event(level: str, event: str, **fields: Any) -> None:
+    payload = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "level": level.upper(),
+        "service": "twin_api",
+        "environment": get_environment(),
+        "event": event,
+        "request_id": REQUEST_ID_CTX.get(),
+        **fields,
+    }
+    INGESTION_EVENTS.append(payload)
+    getattr(LOGGER, level.lower(), LOGGER.info)(json.dumps(payload, default=str))
 
 
 class ApiError(Exception):
@@ -54,7 +235,20 @@ class ApiError(Exception):
 
 
 @app.exception_handler(ApiError)
-def handle_api_error(_, exc: ApiError) -> JSONResponse:
+def handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
+    OBSERVABILITY.record_api_error(exc.code)
+    if request.url.path == "/ingest":
+        OBSERVABILITY.record_ingest_failure(exc.code)
+
+    log_event(
+        "error",
+        "api_error",
+        path=request.url.path,
+        status_code=exc.status_code,
+        error_code=exc.code,
+        error_message=exc.message,
+        details=exc.details,
+    )
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -63,6 +257,34 @@ def handle_api_error(_, exc: ApiError) -> JSONResponse:
                 "code": exc.code,
                 "message": exc.message,
                 "details": exc.details,
+            },
+        },
+    )
+
+
+@app.exception_handler(Exception)
+def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+    OBSERVABILITY.record_api_error("internal_server_error")
+    if request.url.path == "/ingest":
+        OBSERVABILITY.record_ingest_failure("internal_server_error")
+
+    log_event(
+        "error",
+        "unhandled_exception",
+        path=request.url.path,
+        error_type=type(exc).__name__,
+        error_message=str(exc),
+        traceback=traceback.format_exc(),
+    )
+
+    return JSONResponse(
+        status_code=500,
+        content={
+            "status": "error",
+            "error": {
+                "code": "internal_server_error",
+                "message": "Internal Server Error",
+                "details": {},
             },
         },
     )
@@ -100,41 +322,6 @@ def get_environment() -> str:
     return os.getenv("TWIN_ENV", "local")
 
 
-def record_request(path: str) -> None:
-    with METRICS_LOCK:
-        REQUEST_METRICS["total"] += 1
-        REQUEST_METRICS["by_path"][path] = REQUEST_METRICS["by_path"].get(path, 0) + 1
-
-
-def render_metrics() -> str:
-    with METRICS_LOCK:
-        total_requests = REQUEST_METRICS["total"]
-        by_path = dict(REQUEST_METRICS["by_path"])
-
-    uptime_seconds = max(time.time() - APP_START_TIME, 0)
-    lines = [
-        "# HELP twingraphops_requests_total Total HTTP requests served by the API.",
-        "# TYPE twingraphops_requests_total counter",
-        f"twingraphops_requests_total {total_requests}",
-        "# HELP twingraphops_endpoint_requests_total Requests served by endpoint path.",
-        "# TYPE twingraphops_endpoint_requests_total counter",
-    ]
-    for path, count in sorted(by_path.items()):
-        safe_path = path.replace('"', '\\"')
-        lines.append(f'twingraphops_endpoint_requests_total{{path="{safe_path}"}} {count}')
-    lines.extend(
-        [
-            "# HELP twingraphops_uptime_seconds Seconds since the API process started.",
-            "# TYPE twingraphops_uptime_seconds gauge",
-            f"twingraphops_uptime_seconds {uptime_seconds:.0f}",
-            "# HELP twingraphops_environment_info Current application environment.",
-            "# TYPE twingraphops_environment_info gauge",
-            f'twingraphops_environment_info{{environment="{get_environment()}"}} 1',
-        ]
-    )
-    return "\n".join(lines) + "\n"
-
-
 def get_driver():
     global DRIVER
     if DRIVER is not None:
@@ -167,14 +354,76 @@ def get_artifacts_root() -> Path:
     return Path(os.getenv("ARTIFACTS_DIR", "runtime/artifacts"))
 
 
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def normalize_ingestion_id(ingestion_id: str | None) -> str:
+    if ingestion_id is None:
+        return str(uuid.uuid4())
+
+    normalized = ingestion_id.strip()
+    if not normalized:
+        raise ApiError(
+            400,
+            "invalid_ingestion_id",
+            "ingestion_id must contain only letters, numbers, hyphens, and underscores.",
+        )
+
+    if not INGESTION_ID_PATTERN.fullmatch(normalized):
+        raise ApiError(
+            400,
+            "invalid_ingestion_id",
+            "ingestion_id must contain only letters, numbers, hyphens, and underscores.",
+        )
+
+    return normalized
+
+
+def get_artifact_dir(ingestion_id: str) -> Path:
+    normalized_ingestion_id = normalize_ingestion_id(ingestion_id)
+    artifacts_root = get_artifacts_root().resolve()
+    artifact_dir_name = uuid.uuid5(ARTIFACT_DIR_NAMESPACE, normalized_ingestion_id).hex
+    return artifacts_root / artifact_dir_name
+
+
 def check_neo4j() -> tuple[bool, str | None]:
+    start_time = time.perf_counter()
     try:
         with get_driver().session() as session:
             result = session.run("RETURN 1 AS ok").single()
             if result and result["ok"] == 1:
+                duration = time.perf_counter() - start_time
+                OBSERVABILITY.observe_neo4j("healthcheck", True, duration)
+                log_event(
+                    "info",
+                    "neo4j_healthcheck_succeeded",
+                    duration_ms=round(duration * 1000, 2),
+                )
                 return True, None
     except Exception as exc:  # pragma: no cover
+        duration = time.perf_counter() - start_time
+        OBSERVABILITY.observe_neo4j("healthcheck", False, duration)
+        log_event(
+            "error",
+            "neo4j_healthcheck_failed",
+            duration_ms=round(duration * 1000, 2),
+            error_message=str(exc),
+        )
         return False, str(exc)
+
+    duration = time.perf_counter() - start_time
+    OBSERVABILITY.observe_neo4j("healthcheck", False, duration)
+    log_event(
+        "error",
+        "neo4j_healthcheck_failed",
+        duration_ms=round(duration * 1000, 2),
+        error_message="Neo4j returned an unexpected response.",
+    )
     return False, "Neo4j returned an unexpected response."
 
 
@@ -192,12 +441,24 @@ def _serialize_graph(graph: MergedGraph) -> dict[str, Any]:
     }
 
 
-def _write_json(path: Path, payload: Any) -> None:
+def _artifact_file_path(artifact_dir: Path, filename: str) -> Path:
+    if not ARTIFACT_FILENAME_PATTERN.fullmatch(filename):
+        raise ApiError(400, "invalid_artifact_filename", "Artifact filename contains unsupported characters.")
+    artifacts_root = get_artifacts_root().resolve()
+    artifact_path = (artifact_dir / filename).resolve()
+    if not _is_relative_to(artifact_path, artifacts_root):
+        raise ApiError(400, "invalid_artifact_path", "Artifact path resolved outside the configured artifacts directory.")
+    return artifact_path
+
+
+def _write_json(artifact_dir: Path, filename: str, payload: Any) -> None:
+    path = _artifact_file_path(artifact_dir, filename)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def _write_text(path: Path, payload: str) -> None:
+def _write_text(artifact_dir: Path, filename: str, payload: str) -> None:
+    path = _artifact_file_path(artifact_dir, filename)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(payload, encoding="utf-8")
 
@@ -307,8 +568,33 @@ def _write_graph_tx(tx, graph: MergedGraph, source: str, ingestion_id: str, repl
 
 
 def persist_graph_to_store(graph: MergedGraph, source: str, ingestion_id: str, replace_existing: bool) -> None:
-    with get_driver().session() as session:
-        session.execute_write(_write_graph_tx, graph, source, ingestion_id, replace_existing)
+    try:
+        with get_driver().session() as session:
+            session.execute_write(_write_graph_tx, graph, source, ingestion_id, replace_existing)
+    except Exception as exc:
+        OBSERVABILITY.record_graph_persist(False)
+        log_event(
+            "error",
+            "graph_persist_failed",
+            ingestion_id=ingestion_id,
+            source=source,
+            replace_existing=replace_existing,
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+        )
+        raise
+
+    OBSERVABILITY.record_graph_persist(True)
+    OBSERVABILITY.update_graph_summary(graph)
+    log_event(
+        "info",
+        "graph_persisted",
+        ingestion_id=ingestion_id,
+        source=source,
+        replace_existing=replace_existing,
+        nodes_created=len(graph.nodes),
+        edges_created=len(graph.edges),
+    )
 
 
 def fetch_graph_from_store() -> MergedGraph:
@@ -322,7 +608,9 @@ def fetch_graph_from_store() -> MergedGraph:
             """
         ).single()
         if component_exists is None:
-            return MergedGraph()
+            empty_graph = MergedGraph()
+            OBSERVABILITY.update_graph_summary(empty_graph)
+            return empty_graph
 
         node_records = list(
             session.run(
@@ -389,12 +677,16 @@ def fetch_graph_from_store() -> MergedGraph:
         )
         for record in edge_records
     ]
-    return MergedGraph(nodes=nodes, edges=edges)
+    graph = MergedGraph(nodes=nodes, edges=edges)
+    OBSERVABILITY.update_graph_summary(graph)
+    return graph
 
 
 def seed_demo_graph() -> MergedGraph:
     graph = compute_graph_metrics(build_demo_graph())
     persist_graph_to_store(graph, source="demo", ingestion_id="demo-seed", replace_existing=True)
+    OBSERVABILITY.record_graph_counts(nodes_created=len(graph.nodes), edges_created=len(graph.edges))
+    OBSERVABILITY.update_graph_summary(graph)
     return graph
 
 
@@ -405,12 +697,29 @@ def ensure_active_graph() -> MergedGraph:
     return seed_demo_graph()
 
 
-def run_ingestion_pipeline(filename: str, text: str, replace_existing: bool) -> dict[str, Any]:
-    ingestion_id = str(uuid.uuid4())
-    artifact_dir = get_artifacts_root() / ingestion_id
+def run_ingestion_pipeline(filename: str, text: str, replace_existing: bool, ingestion_id: str | None = None) -> dict[str, Any]:
+    ingestion_id = normalize_ingestion_id(ingestion_id)
+    artifact_dir = get_artifact_dir(ingestion_id)
+    INGESTION_EVENTS.register(ingestion_id, filename)
+
+    log_event(
+        "info",
+        "ingest_started",
+        ingestion_id=ingestion_id,
+        filename=filename,
+        replace_existing=replace_existing,
+    )
+
     try:
         extractor = get_gemini_client()
     except RuntimeError as exc:
+        log_event(
+            "error",
+            "ingest_configuration_failed",
+            ingestion_id=ingestion_id,
+            filename=filename,
+            error_message=str(exc),
+        )
         raise ApiError(500, "gemini_not_configured", str(exc)) from exc
 
     chunks = chunk_text(
@@ -420,23 +729,48 @@ def run_ingestion_pipeline(filename: str, text: str, replace_existing: bool) -> 
     )
     if not chunks:
         raise ApiError(400, "empty_upload", "Uploaded file is empty.")
+    OBSERVABILITY.record_ingest_document(source="user", chunk_count=len(chunks))
 
-    _write_text(artifact_dir / "source_document.md", text)
+    log_event(
+        "info",
+        "ingest_chunking_completed",
+        ingestion_id=ingestion_id,
+        filename=filename,
+        chunks_total=len(chunks),
+        payload_chars=len(text),
+    )
+
+    _write_text(artifact_dir, "source_document.md", text)
 
     chunk_graphs: list[ChunkGraph] = []
     for index, chunk in enumerate(chunks, start=1):
         prompt = build_extraction_prompt(chunk)
         chunk_name = f"chunk_{index:02d}"
-        _write_text(artifact_dir / f"{chunk_name}.txt", chunk)
-        _write_text(artifact_dir / f"{chunk_name}_prompt.txt", prompt)
-
+        _write_text(artifact_dir, f"{chunk_name}.txt", chunk)
+        _write_text(artifact_dir, f"{chunk_name}_prompt.txt", prompt)
+        log_event(
+            "info",
+            "ingest_chunk_started",
+            ingestion_id=ingestion_id,
+            chunk_index=index,
+            chunk_name=chunk_name,
+            chunk_chars=len(chunk),
+        )
+        gemini_started_at = time.perf_counter()
         try:
             graph, payload = extractor.extract_chunk(chunk_text=chunk, prompt=prompt, chunk_index=index)
         except GeminiExtractionError as exc:
+            OBSERVABILITY.observe_gemini(
+                attempts=extractor.last_attempts,
+                duration_seconds=time.perf_counter() - gemini_started_at,
+                success=False,
+                code=exc.code,
+            )
             if exc.raw_payload is not None:
-                _write_json(artifact_dir / f"{chunk_name}_response.json", exc.raw_payload)
+                _write_json(artifact_dir, f"{chunk_name}_response.json", exc.raw_payload)
             _write_json(
-                artifact_dir / f"{chunk_name}_validation.json",
+                artifact_dir,
+                f"{chunk_name}_validation.json",
                 {
                     "status": "error",
                     "code": exc.code,
@@ -444,29 +778,82 @@ def run_ingestion_pipeline(filename: str, text: str, replace_existing: bool) -> 
                     "validation_errors": exc.validation_errors,
                 },
             )
+            log_event(
+                "error",
+                "ingest_chunk_failed",
+                ingestion_id=ingestion_id,
+                chunk_index=exc.chunk_index,
+                chunk_name=chunk_name,
+                error_code=exc.code,
+                error_message=str(exc),
+                validation_errors=exc.validation_errors,
+            )
             raise ApiError(
                 422,
                 exc.code,
                 str(exc),
                 {"chunk_index": exc.chunk_index, "validation_errors": exc.validation_errors},
             ) from exc
+        OBSERVABILITY.observe_gemini(
+            attempts=extractor.last_attempts,
+            duration_seconds=time.perf_counter() - gemini_started_at,
+            success=True,
+            code="ok",
+        )
 
-        _write_json(artifact_dir / f"{chunk_name}_response.json", payload)
+        _write_json(artifact_dir, f"{chunk_name}_response.json", payload)
         _write_json(
-            artifact_dir / f"{chunk_name}_validation.json",
+            artifact_dir,
+            f"{chunk_name}_validation.json",
             {"status": "ok", "validation_errors": [], "node_count": len(graph.nodes), "edge_count": len(graph.edges)},
         )
         chunk_graphs.append(graph)
 
+        log_event(
+            "info",
+            "ingest_chunk_succeeded",
+            ingestion_id=ingestion_id,
+            chunk_index=index,
+            chunk_name=chunk_name,
+            node_count=len(graph.nodes),
+            edge_count=len(graph.edges),
+        )
+
     try:
         merged_graph = compute_graph_metrics(merge_chunk_graphs(chunk_graphs))
     except GraphValidationError as exc:
+        log_event(
+            "error",
+            "graph_merge_failed",
+            ingestion_id=ingestion_id,
+            error_message=str(exc),
+            validation_errors=exc.validation_errors,
+        )
         raise ApiError(422, "graph_merge_failed", str(exc), {"validation_errors": exc.validation_errors}) from exc
 
+    log_event(
+        "info",
+        "graph_merge_completed",
+        ingestion_id=ingestion_id,
+        nodes_created=len(merged_graph.nodes),
+        edges_created=len(merged_graph.edges),
+    )
+
     persist_graph_to_store(merged_graph, source="user", ingestion_id=ingestion_id, replace_existing=replace_existing)
-    _write_json(artifact_dir / "merged_graph.json", model_dump_compat(merged_graph))
-    _write_json(artifact_dir / "neo4j_payload.json", model_dump_compat(merged_graph))
-    _write_json(artifact_dir / "risk_summary.json", _risk_summary(merged_graph))
+    OBSERVABILITY.record_graph_counts(nodes_created=len(merged_graph.nodes), edges_created=len(merged_graph.edges))
+    OBSERVABILITY.update_graph_summary(merged_graph)
+    _write_json(artifact_dir, "merged_graph.json", model_dump_compat(merged_graph))
+    _write_json(artifact_dir, "neo4j_payload.json", model_dump_compat(merged_graph))
+    _write_json(artifact_dir, "risk_summary.json", _risk_summary(merged_graph))
+
+    log_event(
+        "info",
+        "ingest_completed",
+        ingestion_id=ingestion_id,
+        filename=filename,
+        chunks_total=len(chunks),
+        artifacts_path=str(artifact_dir).replace("\\", "/"),
+    )
 
     return {
         "ingestion_id": ingestion_id,
@@ -487,9 +874,70 @@ def shutdown_driver() -> None:
         DRIVER = None
 
 
+@app.middleware("http")
+async def instrument_requests(request: Request, call_next):
+    started_at = time.perf_counter()
+    status_code = 500
+    request_id = str(uuid.uuid4())
+    REQUEST_ID_CTX.set(request_id)
+
+    OBSERVABILITY.http_in_flight_requests.inc()
+
+    route = request.scope.get("route")
+    path = normalize_http_path(request.url.path, getattr(route, "path", None))
+
+    log_event(
+        "info",
+        "request_started",
+        method=request.method,
+        path=path,
+        client_host=request.client.host if request.client else None,
+    )
+
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        response.headers["X-Request-ID"] = request_id
+
+        log_event(
+            "info",
+            "request_completed",
+            method=request.method,
+            path=path,
+            status_code=status_code,
+            latency_ms=round((time.perf_counter() - started_at) * 1000, 2),
+        )
+        return response
+
+    except Exception as exc:
+        OBSERVABILITY.record_api_error("internal_server_error")
+
+        log_event(
+            "error",
+            "request_failed",
+            method=request.method,
+            path=path,
+            status_code=status_code,
+            latency_ms=round((time.perf_counter() - started_at) * 1000, 2),
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+            traceback=traceback.format_exc(),
+        )
+        raise
+
+    finally:
+        OBSERVABILITY.record_http_request(
+            method=request.method,
+            path=path,
+            status_code=status_code,
+            duration_seconds=time.perf_counter() - started_at,
+        )
+        OBSERVABILITY.http_in_flight_requests.dec()
+
+
 @app.get("/")
 def root():
-    record_request("/")
+    log_event("info", "root_requested")
     return {
         "service": "twin_api",
         "status": "ok",
@@ -503,38 +951,55 @@ def root():
 
 @app.get("/health")
 def health():
-    record_request("/health")
+    log_event("info", "health_requested")
     return {"status": "ok", "environment": get_environment()}
 
 
 @app.get("/ready")
 def ready():
-    record_request("/ready")
     healthy, reason = check_neo4j()
     if not healthy:
+        OBSERVABILITY.record_api_error("neo4j_unavailable")
+        log_event("error", "readiness_failed", dependency="neo4j", reason=reason)
         raise HTTPException(status_code=503, detail={"status": "not_ready", "reason": reason})
+    log_event("info", "readiness_succeeded", dependency="neo4j")
     return {"status": "ready", "dependencies": {"neo4j": "ok"}, "environment": get_environment()}
 
 
 @app.get("/health/neo4j")
 def health_neo4j():
-    record_request("/health/neo4j")
     healthy, reason = check_neo4j()
     if not healthy:
+        OBSERVABILITY.record_api_error("neo4j_unavailable")
+        log_event("error", "neo4j_health_failed", reason=reason)
         raise HTTPException(status_code=503, detail={"neo4j": "bad", "reason": reason})
+    log_event("info", "neo4j_health_succeeded")
     return {"neo4j": "ok"}
 
 
-@app.get("/metrics", response_class=PlainTextResponse)
+@app.get("/metrics")
 def metrics():
-    record_request("/metrics")
-    return render_metrics()
+    log_event("info", "metrics_requested")
+    payload, content_type = OBSERVABILITY.render_metrics(get_environment())
+    return Response(content=payload, media_type=content_type)
+
+
+@app.get("/ingest/{ingestion_id}/events")
+def get_ingestion_events(ingestion_id: str):
+    ingestion_id = normalize_ingestion_id(ingestion_id)
+    return success_response(INGESTION_EVENTS.get(ingestion_id))
 
 
 @app.post("/seed")
 def seed():
-    record_request("/seed")
     graph = seed_demo_graph()
+    log_event(
+        "info",
+        "seed_completed",
+        source="demo",
+        nodes_created=len(graph.nodes),
+        edges_created=len(graph.edges),
+    )
     return success_response(
         {
             "source": "demo",
@@ -547,17 +1012,34 @@ def seed():
 
 @app.get("/graph")
 def get_graph():
-    record_request("/graph")
-    return success_response(_serialize_graph(ensure_active_graph()))
+    graph = ensure_active_graph()
+    log_event(
+        "info",
+        "graph_requested",
+        source=_graph_source(graph),
+        node_count=len(graph.nodes),
+        edge_count=len(graph.edges),
+    )
+    return success_response(_serialize_graph(graph))
 
 
 @app.get("/impact")
 def impact(component_id: str):
-    record_request("/impact")
+    log_event(
+        "info",
+        "impact_requested",
+        component_id=component_id,
+    )
     graph = ensure_active_graph()
     if not get_node_by_id(graph, component_id):
         raise ApiError(404, "component_not_found", f"Component '{component_id}' was not found.")
     impacted = get_impacted_components(graph, component_id)
+    log_event(
+        "info",
+        "impact_completed",
+        component_id=component_id,
+        impact_count=len(impacted),
+    )
     return success_response(
         {
             "component_id": component_id,
@@ -569,12 +1051,24 @@ def impact(component_id: str):
 
 @app.get("/risk")
 def risk(component_id: str):
-    record_request("/risk")
+    log_event(
+        "info",
+        "risk_requested",
+        component_id=component_id,
+    )
     graph = ensure_active_graph()
     node = get_node_by_id(graph, component_id)
     if not node:
         raise ApiError(404, "component_not_found", f"Component '{component_id}' was not found.")
     impacted = get_impacted_components(graph, component_id)
+    log_event(
+        "info",
+        "risk_completed",
+        component_id=component_id,
+        risk_level=node.risk_level,
+        risk_score=node.risk_score,
+        impact_count=len(impacted),
+    )
     return success_response(
         {
             "component_id": component_id,
@@ -587,7 +1081,24 @@ def risk(component_id: str):
 
 
 @app.post("/ingest")
-def ingest(file: UploadFile = File(...), replace_existing: bool = Form(True)):
-    record_request("/ingest")
+def ingest(file: UploadFile = File(...), replace_existing: bool = Form(True), ingestion_id: str | None = Form(None)):
+    normalized_ingestion_id = normalize_ingestion_id(ingestion_id) if ingestion_id is not None else None
+    if normalized_ingestion_id:
+        INGESTION_EVENTS.register(normalized_ingestion_id)
     filename, text = read_upload(file)
-    return success_response(run_ingestion_pipeline(filename=filename, text=text, replace_existing=replace_existing))
+    log_event(
+        "info",
+        "ingest_endpoint_called",
+        ingestion_id=normalized_ingestion_id,
+        filename=filename,
+        replace_existing=replace_existing,
+        payload_chars=len(text),
+    )
+    return success_response(
+        run_ingestion_pipeline(
+            filename=filename,
+            text=text,
+            replace_existing=replace_existing,
+            ingestion_id=normalized_ingestion_id,
+        )
+    )

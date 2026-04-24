@@ -1,5 +1,12 @@
 import { appConfig } from './config';
-import type { ApiGraphData, ApiPayload, ImpactResponse, IngestResponse, RiskResponse } from '../types/api';
+import type {
+  ApiGraphData,
+  ApiPayload,
+  ImpactResponse,
+  IngestResponse,
+  ProcessingStatus,
+  RiskResponse,
+} from '../types/api';
 
 export class ApiClientError extends Error {
   code?: string;
@@ -102,10 +109,18 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 3000
   }
 }
 
-export async function uploadDocument(file: File, replaceExisting = true, timeoutMs = appConfig.processingTimeoutMs) {
+export async function uploadDocument(
+  file: File,
+  replaceExisting = true,
+  timeoutMs = appConfig.processingTimeoutMs,
+  ingestionId?: string
+) {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('replace_existing', String(replaceExisting));
+  if (ingestionId) {
+    formData.append('ingestion_id', ingestionId);
+  }
 
   return request<IngestResponse>(
     '/ingest',
@@ -136,9 +151,8 @@ export async function seedDemoGraph() {
   );
 }
 
-export async function getProcessingStatus(_ingestionId: string): Promise<never> {
-  // TODO: add backend polling integration when a job status endpoint is introduced.
-  throw new UnsupportedEndpointError('The current backend contract does not expose a processing status endpoint.');
+export async function getProcessingStatus(ingestionId: string) {
+  return request<ProcessingStatus>(`/ingest/${encodeURIComponent(ingestionId)}/events`);
 }
 
 export async function getRiskRankedItems(): Promise<never> {

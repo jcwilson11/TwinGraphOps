@@ -26,6 +26,26 @@ export interface IngestResponse {
   risk_nodes_scored: number;
 }
 
+export interface ProcessingEvent {
+  timestamp: string | null;
+  level: string | null;
+  event: string;
+  message: string;
+  chunk_index?: number | null;
+}
+
+export interface ProcessingStatus {
+  ingestion_id: string;
+  state: 'pending' | 'running' | 'succeeded' | 'failed';
+  filename: string | null;
+  chunks_total: number | null;
+  current_chunk: number | null;
+  started_at: string | null;
+  completed_at: string | null;
+  latest_event: string;
+  events: ProcessingEvent[];
+}
+
 export interface ApiGraphNode {
   id: string;
   name: string;

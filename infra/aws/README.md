@@ -4,7 +4,8 @@ TwinGraphOps now builds on the same container topology used for localhost develo
 
 - `neo4j` runs in Docker with persistent local volumes
 - `api` and `frontend` run as containers pulled from Amazon ECR
-- `nginx` listens on port `80` and routes `/` to the frontend and `/api/*` to the FastAPI service
+- `prometheus` and `grafana` run alongside the app services for cloud observability
+- `nginx` listens on port `80` and routes `/` to the frontend, `/api/*` to the FastAPI service, and `/grafana/*` to Grafana
 - runtime secrets come from AWS Secrets Manager during deployment
 - GitHub Actions uses AWS OIDC, Amazon ECR, and AWS Systems Manager to release tagged versions
 
@@ -16,11 +17,19 @@ The production secret in Secrets Manager must have a JSON `SecretString` like:
 {
   "neo4j_user": "neo4j",
   "neo4j_password": "replace-with-real-password",
-  "gemini_api_key": "replace-with-real-api-key"
+  "gemini_api_key": "replace-with-real-api-key",
+  "grafana_admin_user": "replace-with-real-admin-user",
+  "grafana_admin_password": "replace-with-real-admin-password"
 }
 ```
 
 ## 2. Launch the EC2 host
+
+Create the production Gemini model parameter in Systems Manager Parameter Store:
+
+- name: `/twingraphops/production/gemini_model`
+- type: `String`
+- value: the Gemini model name to run in production
 
 Deploy the CloudFormation stack in a public subnet:
 
@@ -41,7 +50,7 @@ Important notes:
 - use a public subnet with outbound internet access
 - `t3.medium` is the default because Neo4j is more comfortable there than on a tiny instance
 - the stack only opens port `80`
-- the instance reads the secret directly, so the EC2 role only needs read access to that one secret plus ECR read access
+- the instance reads the secret and Gemini model parameter directly, so the EC2 role only needs read access to that one secret, `/twingraphops/production/gemini_model`, and ECR
 - the EC2 bootstrap installs Docker from Amazon Linux 2023 and installs Docker Compose as a CLI plugin
 
 ## 3. Configure GitHub Actions
@@ -107,3 +116,5 @@ Use the EC2 public DNS name or public IP from the CloudFormation outputs:
 - `http://<public-host>/api/health`
 - `http://<public-host>/api/ready`
 - `http://<public-host>/api/metrics`
+- `http://<public-host>/grafana/`
+- `http://<public-host>/grafana/api/health`
