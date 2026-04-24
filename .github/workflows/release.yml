@@ -216,6 +216,8 @@ jobs:
             local source_tag="$2"
             local target_tag="$3"
             local image_manifest=""
+            local source_digest=""
+            local target_digest=""
 
             image_manifest="$(aws ecr batch-get-image \
               --repository-name "$repository_name" \
@@ -223,8 +225,35 @@ jobs:
               --query 'images[0].imageManifest' \
               --output text)"
 
+            source_digest="$(aws ecr describe-images \
+              --repository-name "$repository_name" \
+              --image-ids imageTag="$source_tag" \
+              --query 'imageDetails[0].imageDigest' \
+              --output text)"
+
             if [[ -z "$image_manifest" || "$image_manifest" == "None" ]]; then
               echo "Unable to resolve manifest for $repository_name:$source_tag" >&2
+              exit 1
+            fi
+
+            if [[ -z "$source_digest" || "$source_digest" == "None" ]]; then
+              echo "Unable to resolve digest for $repository_name:$source_tag" >&2
+              exit 1
+            fi
+
+            target_digest="$(aws ecr describe-images \
+              --repository-name "$repository_name" \
+              --image-ids imageTag="$target_tag" \
+              --query 'imageDetails[0].imageDigest' \
+              --output text 2>/dev/null || true)"
+
+            if [[ "$target_digest" == "$source_digest" ]]; then
+              echo "ECR tag $repository_name:$target_tag already points to $source_digest; leaving it in place."
+              return
+            fi
+
+            if [[ -n "$target_digest" && "$target_digest" != "None" && "$target_tag" == "$RELEASE_REF" ]]; then
+              echo "Release tag $repository_name:$target_tag already points to $target_digest, expected $source_digest." >&2
               exit 1
             fi
 
