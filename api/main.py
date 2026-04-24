@@ -51,6 +51,8 @@ REQUEST_ID_CTX: ContextVar[str] = ContextVar("request_id", default="-")
 LOGGER = logging.getLogger("twingraphops")
 LOGGER.setLevel(logging.INFO)
 INGESTION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+ARTIFACT_FILENAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+ARTIFACT_DIR_NAMESPACE = uuid.UUID("6aef8b2d-51f2-4f8a-9519-5c6dbfe5375a")
 
 if not LOGGER.handlers:
     handler = logging.StreamHandler()
@@ -383,11 +385,10 @@ def normalize_ingestion_id(ingestion_id: str | None) -> str:
 
 
 def get_artifact_dir(ingestion_id: str) -> Path:
+    normalized_ingestion_id = normalize_ingestion_id(ingestion_id)
     artifacts_root = get_artifacts_root().resolve()
-    artifact_dir = (artifacts_root / ingestion_id).resolve()
-    if not _is_relative_to(artifact_dir, artifacts_root):
-        raise ApiError(400, "invalid_ingestion_id", "ingestion_id resolved outside the configured artifacts directory.")
-    return artifact_dir
+    artifact_dir_name = uuid.uuid5(ARTIFACT_DIR_NAMESPACE, normalized_ingestion_id).hex
+    return artifacts_root / artifact_dir_name
 
 
 def check_neo4j() -> tuple[bool, str | None]:
@@ -440,12 +441,24 @@ def _serialize_graph(graph: MergedGraph) -> dict[str, Any]:
     }
 
 
-def _write_json(path: Path, payload: Any) -> None:
+def _artifact_file_path(artifact_dir: Path, filename: str) -> Path:
+    if not ARTIFACT_FILENAME_PATTERN.fullmatch(filename):
+        raise ApiError(400, "invalid_artifact_filename", "Artifact filename contains unsupported characters.")
+    artifacts_root = get_artifacts_root().resolve()
+    artifact_path = (artifact_dir / filename).resolve()
+    if not _is_relative_to(artifact_path, artifacts_root):
+        raise ApiError(400, "invalid_artifact_path", "Artifact path resolved outside the configured artifacts directory.")
+    return artifact_path
+
+
+def _write_json(artifact_dir: Path, filename: str, payload: Any) -> None:
+    path = _artifact_file_path(artifact_dir, filename)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def _write_text(path: Path, payload: str) -> None:
+def _write_text(artifact_dir: Path, filename: str, payload: str) -> None:
+    path = _artifact_file_path(artifact_dir, filename)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(payload, encoding="utf-8")
 
@@ -727,14 +740,14 @@ def run_ingestion_pipeline(filename: str, text: str, replace_existing: bool, ing
         payload_chars=len(text),
     )
 
-    _write_text(artifact_dir / "source_document.md", text)
+    _write_text(artifact_dir, "source_document.md", text)
 
     chunk_graphs: list[ChunkGraph] = []
     for index, chunk in enumerate(chunks, start=1):
         prompt = build_extraction_prompt(chunk)
         chunk_name = f"chunk_{index:02d}"
-        _write_text(artifact_dir / f"{chunk_name}.txt", chunk)
-        _write_text(artifact_dir / f"{chunk_name}_prompt.txt", prompt)
+        _write_text(artifact_dir, f"{chunk_name}.txt", chunk)
+        _write_text(artifact_dir, f"{chunk_name}_prompt.txt", prompt)
         log_event(
             "info",
             "ingest_chunk_started",
@@ -754,9 +767,10 @@ def run_ingestion_pipeline(filename: str, text: str, replace_existing: bool, ing
                 code=exc.code,
             )
             if exc.raw_payload is not None:
-                _write_json(artifact_dir / f"{chunk_name}_response.json", exc.raw_payload)
+                _write_json(artifact_dir, f"{chunk_name}_response.json", exc.raw_payload)
             _write_json(
-                artifact_dir / f"{chunk_name}_validation.json",
+                artifact_dir,
+                f"{chunk_name}_validation.json",
                 {
                     "status": "error",
                     "code": exc.code,
@@ -787,9 +801,10 @@ def run_ingestion_pipeline(filename: str, text: str, replace_existing: bool, ing
             code="ok",
         )
 
-        _write_json(artifact_dir / f"{chunk_name}_response.json", payload)
+        _write_json(artifact_dir, f"{chunk_name}_response.json", payload)
         _write_json(
-            artifact_dir / f"{chunk_name}_validation.json",
+            artifact_dir,
+            f"{chunk_name}_validation.json",
             {"status": "ok", "validation_errors": [], "node_count": len(graph.nodes), "edge_count": len(graph.edges)},
         )
         chunk_graphs.append(graph)
@@ -827,9 +842,9 @@ def run_ingestion_pipeline(filename: str, text: str, replace_existing: bool, ing
     persist_graph_to_store(merged_graph, source="user", ingestion_id=ingestion_id, replace_existing=replace_existing)
     OBSERVABILITY.record_graph_counts(nodes_created=len(merged_graph.nodes), edges_created=len(merged_graph.edges))
     OBSERVABILITY.update_graph_summary(merged_graph)
-    _write_json(artifact_dir / "merged_graph.json", model_dump_compat(merged_graph))
-    _write_json(artifact_dir / "neo4j_payload.json", model_dump_compat(merged_graph))
-    _write_json(artifact_dir / "risk_summary.json", _risk_summary(merged_graph))
+    _write_json(artifact_dir, "merged_graph.json", model_dump_compat(merged_graph))
+    _write_json(artifact_dir, "neo4j_payload.json", model_dump_compat(merged_graph))
+    _write_json(artifact_dir, "risk_summary.json", _risk_summary(merged_graph))
 
     log_event(
         "info",

@@ -110,7 +110,7 @@ test('proxy failures return the expected 502 payload', async () => {
     assert.equal(response.status, 502);
     assert.equal(payload.status, 'error');
     assert.equal(payload.error.code, 'frontend_proxy_failed');
-    assert.match(payload.error.message, /backend unavailable/);
+    assert.equal(payload.error.message, 'The frontend could not reach the API.');
   });
 });
 

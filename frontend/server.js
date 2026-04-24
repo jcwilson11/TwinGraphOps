@@ -137,6 +137,17 @@ function sendJson(res, statusCode, payload) {
   res.end(body);
 }
 
+function sendProxyFailure(res, error) {
+  console.error('Frontend proxy failed:', error);
+  sendJson(res, 502, {
+    status: 'error',
+    error: {
+      code: 'frontend_proxy_failed',
+      message: 'The frontend could not reach the API.',
+    },
+  });
+}
+
 function sendText(res, statusCode, body, contentType = 'text/plain; charset=utf-8') {
   res.statusCode = statusCode;
   res.setHeader('content-type', contentType);
@@ -207,13 +218,7 @@ function createApp(options = {}) {
         response.headers.get('content-type') || 'application/json; charset=utf-8'
       );
     } catch (error) {
-      sendJson(res, 502, {
-        status: 'error',
-        error: {
-          code: 'frontend_proxy_failed',
-          message: String(error),
-        },
-      });
+      sendProxyFailure(res, error);
     }
   }
 
@@ -310,7 +315,6 @@ function createApp(options = {}) {
           });
 
           const text = await response.text();
-          console.log('BACKEND RESPONSE:', text);
           sendText(
             res,
             response.status,
@@ -318,13 +322,7 @@ function createApp(options = {}) {
             response.headers.get('content-type') || 'application/json; charset=utf-8'
           );
         } catch (error) {
-          sendJson(res, 502, {
-            status: 'error',
-            error: {
-              code: 'frontend_proxy_failed',
-              message: String(error),
-            },
-          });
+          sendProxyFailure(res, error);
         }
         return;
       }
