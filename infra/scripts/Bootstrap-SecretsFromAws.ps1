@@ -72,6 +72,22 @@ $geminiApiKey = if ($secret.gemini_api_key) {
     ""
 }
 
+$grafanaAdminUser = if ($secret.grafana_admin_user) {
+    [string]$secret.grafana_admin_user
+} elseif ($secret.GRAFANA_ADMIN_USER) {
+    [string]$secret.GRAFANA_ADMIN_USER
+} else {
+    ""
+}
+
+$grafanaAdminPassword = if ($secret.grafana_admin_password) {
+    [string]$secret.grafana_admin_password
+} elseif ($secret.GRAFANA_ADMIN_PASSWORD) {
+    [string]$secret.GRAFANA_ADMIN_PASSWORD
+} else {
+    ""
+}
+
 if (-not $neo4jPassword) {
     throw "The secret must contain neo4j_password (or NEO4J_PASSWORD)."
 }
@@ -85,14 +101,26 @@ if (-not $geminiApiKey) {
     $geminiApiKey = "replace-me"
 }
 
+if (-not $grafanaAdminUser) {
+    throw "The secret must contain grafana_admin_user (or GRAFANA_ADMIN_USER)."
+}
+
+if (-not $grafanaAdminPassword) {
+    throw "The secret must contain grafana_admin_password (or GRAFANA_ADMIN_PASSWORD)."
+}
+
 New-Item -ItemType Directory -Force -Path $SecretsDir | Out-Null
 [System.IO.File]::WriteAllText((Join-Path $SecretsDir "neo4j_auth.txt"), "$neo4jUser/$neo4jPassword")
 [System.IO.File]::WriteAllText((Join-Path $SecretsDir "neo4j_user.txt"), $neo4jUser)
 [System.IO.File]::WriteAllText((Join-Path $SecretsDir "neo4j_password.txt"), $neo4jPassword)
 [System.IO.File]::WriteAllText((Join-Path $SecretsDir "gemini_api_key.txt"), $geminiApiKey)
+[System.IO.File]::WriteAllText((Join-Path $SecretsDir "grafana_admin_user.txt"), $grafanaAdminUser)
+[System.IO.File]::WriteAllText((Join-Path $SecretsDir "grafana_admin_password.txt"), $grafanaAdminPassword)
 
 Write-Host "Wrote:"
 Write-Host "  - $(Join-Path $SecretsDir 'neo4j_auth.txt')"
 Write-Host "  - $(Join-Path $SecretsDir 'neo4j_user.txt')"
 Write-Host "  - $(Join-Path $SecretsDir 'neo4j_password.txt')"
 Write-Host "  - $(Join-Path $SecretsDir 'gemini_api_key.txt')"
+Write-Host "  - $(Join-Path $SecretsDir 'grafana_admin_user.txt')"
+Write-Host "  - $(Join-Path $SecretsDir 'grafana_admin_password.txt')"

@@ -13,6 +13,8 @@ FRONTEND_IMAGE="${FRONTEND_IMAGE:-}"
 PUBLIC_API_BASE_URL="${PUBLIC_API_BASE_URL:-http://api:8000}"
 TWIN_ENV="${TWIN_ENV:-production}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-twingraphops}"
+GEMINI_MODEL="${GEMINI_MODEL:-}"
+GEMINI_MODEL_PARAMETER_NAME="${GEMINI_MODEL_PARAMETER_NAME:-/${COMPOSE_PROJECT_NAME}/${TWIN_ENV}/gemini_model}"
 
 if [[ -z "$AWS_SECRET_ID" ]]; then
   echo "Provide AWS_SECRETS_MANAGER_SECRET_ID or pass the secret id as the first argument." >&2
@@ -55,6 +57,20 @@ TMP_EXPORTS="$(mktemp)"
 
 bash "$BOOTSTRAP_SCRIPT" "$AWS_SECRET_ID" > "$TMP_EXPORTS"
 
+if [[ -z "$GEMINI_MODEL" ]]; then
+  AWS_SSM_ARGS=(ssm get-parameter --name "$GEMINI_MODEL_PARAMETER_NAME" --query Parameter.Value --output text)
+  if [[ -n "$AWS_REGION" ]]; then
+    AWS_SSM_ARGS+=(--region "$AWS_REGION")
+  fi
+
+  if GEMINI_MODEL="$(aws "${AWS_SSM_ARGS[@]}" 2>/dev/null)"; then
+    echo "Loaded GEMINI_MODEL from SSM Parameter Store: $GEMINI_MODEL_PARAMETER_NAME"
+  else
+    GEMINI_MODEL=""
+    echo "GEMINI_MODEL was not set and SSM parameter '$GEMINI_MODEL_PARAMETER_NAME' was not readable; using compose default." >&2
+  fi
+fi
+
 # Compose reads a standard env file, so convert the shell exports into key=value lines.
 {
   while IFS= read -r line; do
@@ -78,6 +94,9 @@ PY
   printf 'API_IMAGE=%s\n' "$API_IMAGE"
   printf 'FRONTEND_IMAGE=%s\n' "$FRONTEND_IMAGE"
   printf 'PUBLIC_API_BASE_URL=%s\n' "$PUBLIC_API_BASE_URL"
+  if [[ -n "$GEMINI_MODEL" ]]; then
+    printf 'GEMINI_MODEL=%s\n' "$GEMINI_MODEL"
+  fi
   printf 'TWIN_ENV=%s\n' "$TWIN_ENV"
   printf 'COMPOSE_PROJECT_NAME=%s\n' "$COMPOSE_PROJECT_NAME"
 } > "$ENV_FILE"
@@ -123,7 +142,8 @@ for i in {1..30}; do
   if check_url http://127.0.0.1/healthz \
     && check_url http://127.0.0.1/api/health \
     && check_url http://127.0.0.1/api/ready \
-    && check_url http://127.0.0.1/api/metrics; then
+    && check_url http://127.0.0.1/api/metrics \
+    && check_url http://127.0.0.1/grafana/api/health; then
     echo "Deployment checks passed."
     exit 0
   fi

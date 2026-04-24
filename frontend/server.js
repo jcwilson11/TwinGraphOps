@@ -9,11 +9,15 @@ function readConfig(overrides = {}) {
   const environment = overrides.environment || process.env.TWIN_ENV || 'local';
   const apiBaseUrl =
     overrides.apiBaseUrl || process.env.PUBLIC_API_BASE_URL || process.env.VITE_API_BASE_URL || 'http://api:8000';
-  const maxUploadMb = Number(overrides.maxUploadMb || process.env.PUBLIC_MAX_UPLOAD_MB || process.env.VITE_MAX_UPLOAD_MB || 10);
-  const processingTimeoutMs = Number(
-    overrides.processingTimeoutMs || process.env.PUBLIC_PROCESSING_TIMEOUT_MS || process.env.VITE_PROCESSING_TIMEOUT_MS || 90000
+  const maxUploadMb = Number(
+    overrides.maxUploadMb || process.env.PUBLIC_MAX_UPLOAD_MB || process.env.VITE_MAX_UPLOAD_MB || 10
   );
-  const staticRateLimitWindowMs = Number(overrides.staticRateLimitWindowMs || process.env.STATIC_RATE_LIMIT_WINDOW_MS || 60_000);
+  const processingTimeoutMs = Number(
+    overrides.processingTimeoutMs || process.env.PUBLIC_PROCESSING_TIMEOUT_MS || process.env.VITE_PROCESSING_TIMEOUT_MS || 300000
+  );
+  const staticRateLimitWindowMs = Number(
+    overrides.staticRateLimitWindowMs || process.env.STATIC_RATE_LIMIT_WINDOW_MS || 60_000
+  );
   const staticRateLimitMax = Number(overrides.staticRateLimitMax || process.env.STATIC_RATE_LIMIT_MAX || 120);
   const distDir = overrides.distDir || path.join(__dirname, 'dist');
 
@@ -28,6 +32,75 @@ function readConfig(overrides = {}) {
     staticRateLimitMax,
     distDir,
   };
+}
+
+function createMetricsState(startedAt = Date.now()) {
+  return {
+    startedAt,
+    requestCount: 0,
+    inFlightRequests: 0,
+    rateLimitHits: 0,
+    requestsByRoute: new Map(),
+    staticAssetByStatus: new Map(),
+  };
+}
+
+function classifyPath(requestPath) {
+  if (requestPath === '/healthz' || requestPath === '/metrics' || requestPath === '/config.js') {
+    return requestPath;
+  }
+  if (/^\/api\/ingest\/[^/]+\/events$/.test(requestPath)) {
+    return '/api/ingest/:ingestionId/events';
+  }
+  if (requestPath.startsWith('/assets/')) {
+    return '/assets/*';
+  }
+  if (requestPath === '/' || requestPath.endsWith('.html')) {
+    return '/';
+  }
+  return '/other';
+}
+
+function incrementCounter(map, key) {
+  map.set(key, (map.get(key) || 0) + 1);
+}
+
+function renderMetrics(state, environment) {
+  const lines = [
+    '# HELP twingraphops_frontend_requests_total Frontend requests by method, path, and status.',
+    '# TYPE twingraphops_frontend_requests_total counter',
+  ];
+
+  for (const [key, count] of [...state.requestsByRoute.entries()].sort()) {
+    const [method, requestPath, status] = key.split('|');
+    lines.push(
+      `twingraphops_frontend_requests_total{method="${method}",path="${requestPath}",status="${status}"} ${count}`
+    );
+  }
+
+  lines.push('# HELP twingraphops_frontend_static_asset_requests_total Static asset responses by status.');
+  lines.push('# TYPE twingraphops_frontend_static_asset_requests_total counter');
+  for (const [status, count] of [...state.staticAssetByStatus.entries()].sort()) {
+    lines.push(`twingraphops_frontend_static_asset_requests_total{status="${status}"} ${count}`);
+  }
+
+  lines.push('# HELP twingraphops_frontend_rate_limit_hits_total Frontend rate limit blocks.');
+  lines.push('# TYPE twingraphops_frontend_rate_limit_hits_total counter');
+  lines.push(`twingraphops_frontend_rate_limit_hits_total ${state.rateLimitHits}`);
+
+  lines.push('# HELP twingraphops_frontend_uptime_seconds Seconds since the frontend process started.');
+  lines.push('# TYPE twingraphops_frontend_uptime_seconds gauge');
+  lines.push(`twingraphops_frontend_uptime_seconds ${Math.floor((Date.now() - state.startedAt) / 1000)}`);
+
+  lines.push('# HELP twingraphops_frontend_in_flight_requests Current in-flight frontend requests.');
+  lines.push('# TYPE twingraphops_frontend_in_flight_requests gauge');
+  lines.push(`twingraphops_frontend_in_flight_requests ${state.inFlightRequests}`);
+
+  lines.push('# HELP twingraphops_frontend_environment_info Current frontend environment.');
+  lines.push('# TYPE twingraphops_frontend_environment_info gauge');
+  lines.push(`twingraphops_frontend_environment_info{environment="${environment}"} 1`);
+
+  return `${lines.join('\n')}\n`;
 }
 
 function getMimeType(filePath) {
@@ -62,6 +135,17 @@ function sendJson(res, statusCode, payload) {
   res.statusCode = statusCode;
   res.setHeader('content-type', 'application/json; charset=utf-8');
   res.end(body);
+}
+
+function sendProxyFailure(res, error) {
+  console.error('Frontend proxy failed:', error);
+  sendJson(res, 502, {
+    status: 'error',
+    error: {
+      code: 'frontend_proxy_failed',
+      message: 'The frontend could not reach the API.',
+    },
+  });
 }
 
 function sendText(res, statusCode, body, contentType = 'text/plain; charset=utf-8') {
@@ -115,7 +199,7 @@ function createApp(options = {}) {
   const fetchImpl = options.fetchImpl || global.fetch;
   const distExists = fs.existsSync(config.distDir);
   const allowStaticRequest = createStaticRateLimiter(config);
-  let requestCount = 0;
+  const metrics = createMetricsState(config.startedAt);
 
   async function proxyJson(res, method, targetUrl) {
     try {
@@ -127,15 +211,14 @@ function createApp(options = {}) {
       });
 
       const text = await response.text();
-      sendText(res, response.status, text, response.headers.get('content-type') || 'application/json; charset=utf-8');
+      sendText(
+        res,
+        response.status,
+        text,
+        response.headers.get('content-type') || 'application/json; charset=utf-8'
+      );
     } catch (error) {
-      sendJson(res, 502, {
-        status: 'error',
-        error: {
-          code: 'frontend_proxy_failed',
-          message: String(error),
-        },
-      });
+      sendProxyFailure(res, error);
     }
   }
 
@@ -164,7 +247,19 @@ function createApp(options = {}) {
 
   function createServer() {
     return http.createServer(async (req, res) => {
-      requestCount += 1;
+      metrics.requestCount += 1;
+      metrics.inFlightRequests += 1;
+
+      res.on('finish', () => {
+        metrics.inFlightRequests = Math.max(metrics.inFlightRequests - 1, 0);
+        const requestUrl = new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1'}`);
+        const pathLabel = classifyPath(requestUrl.pathname);
+        incrementCounter(metrics.requestsByRoute, `${req.method}|${pathLabel}|${res.statusCode}`);
+        if (pathLabel === '/assets/*') {
+          incrementCounter(metrics.staticAssetByStatus, String(res.statusCode));
+        }
+      });
+
       const requestUrl = new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1'}`);
       const { pathname, search } = requestUrl;
 
@@ -177,8 +272,18 @@ function createApp(options = {}) {
           max_upload_mb: config.maxUploadMb,
           processing_timeout_ms: config.processingTimeoutMs,
           uptime_seconds: Math.floor((Date.now() - config.startedAt) / 1000),
-          request_count: requestCount,
+          request_count: metrics.requestCount,
         });
+        return;
+      }
+
+      if (req.method === 'GET' && pathname === '/metrics') {
+        sendText(
+          res,
+          200,
+          renderMetrics(metrics, config.environment),
+          'text/plain; version=0.0.4; charset=utf-8'
+        );
         return;
       }
 
@@ -210,17 +315,27 @@ function createApp(options = {}) {
           });
 
           const text = await response.text();
-          console.log('BACKEND RESPONSE:', text);
-          sendText(res, response.status, text, response.headers.get('content-type') || 'application/json; charset=utf-8');
+          sendText(
+            res,
+            response.status,
+            text,
+            response.headers.get('content-type') || 'application/json; charset=utf-8'
+          );
         } catch (error) {
-          sendJson(res, 502, {
-            status: 'error',
-            error: {
-              code: 'frontend_proxy_failed',
-              message: String(error),
-            },
-          });
+          sendProxyFailure(res, error);
         }
+        return;
+      }
+
+      const processingEventsMatch =
+        req.method === 'GET' ? pathname.match(/^\/api\/ingest\/([^/]+)\/events$/) : null;
+      if (processingEventsMatch) {
+        const ingestionId = processingEventsMatch[1];
+        await proxyJson(
+          res,
+          'GET',
+          `${config.apiBaseUrl}/ingest/${encodeURIComponent(ingestionId)}/events${search}`
+        );
         return;
       }
 
@@ -255,6 +370,7 @@ function createApp(options = {}) {
       }
 
       if (!allowStaticRequest(req.socket.remoteAddress)) {
+        metrics.rateLimitHits += 1;
         sendText(res, 429, 'Too many requests. Please try again shortly.');
         return;
       }
@@ -288,7 +404,9 @@ function startServer(options = {}) {
   const config = readConfig(options);
   const app = createApp(options);
   return app.listen(config.port, '0.0.0.0', () => {
-    console.log(`Frontend running on port ${config.port} in ${config.environment} with API ${config.apiBaseUrl}`);
+    console.log(
+      `Frontend running on port ${config.port} in ${config.environment} with API ${config.apiBaseUrl}`
+    );
   });
 }
 
@@ -297,7 +415,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+  classifyPath,
   createApp,
   readConfig,
+  renderMetrics,
   startServer,
 };

@@ -110,6 +110,77 @@ test('proxy failures return the expected 502 payload', async () => {
     assert.equal(response.status, 502);
     assert.equal(payload.status, 'error');
     assert.equal(payload.error.code, 'frontend_proxy_failed');
-    assert.match(payload.error.message, /backend unavailable/);
+    assert.equal(payload.error.message, 'The frontend could not reach the API.');
+  });
+});
+
+test('metrics returns Prometheus-style frontend counters', async () => {
+  const app = createApp({
+    distDir: path.join(tmpdir(), 'twingraphops-does-not-exist'),
+  });
+
+  await withServer(app, async (baseUrl) => {
+    await fetch(`${baseUrl}/healthz`);
+    await fetch(`${baseUrl}/config.js`);
+
+    const response = await fetch(`${baseUrl}/metrics`);
+    const body = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(
+      body,
+      /twingraphops_frontend_requests_total\{method="GET",path="\/healthz",status="200"\} 1/
+    );
+    assert.match(
+      body,
+      /twingraphops_frontend_requests_total\{method="GET",path="\/config\.js",status="200"\} 1/
+    );
+    assert.match(body, /twingraphops_frontend_environment_info\{environment="local"\} 1/);
+    assert.match(body, /twingraphops_frontend_uptime_seconds \d+/);
+  });
+});
+
+test('processing status route proxies the backend event stream endpoint', async () => {
+  let requestedUrl = '';
+
+  const app = createApp({
+    distDir: path.join(tmpdir(), 'twingraphops-does-not-exist'),
+    fetchImpl: async (url: string | URL | Request) => {
+      requestedUrl = String(url);
+      return new Response(
+        JSON.stringify({
+          status: 'ok',
+          data: {
+            ingestion_id: 'demo-ingest',
+            state: 'running',
+            filename: 'system.md',
+            chunks_total: 4,
+            current_chunk: 2,
+            started_at: null,
+            completed_at: null,
+            latest_event: 'Processing chunk 2 of 4',
+            events: [],
+          },
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }
+      );
+    },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/ingest/demo-ingest/events?limit=5`);
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(
+      requestedUrl,
+      'http://api:8000/ingest/demo-ingest/events?limit=5'
+    );
+    assert.equal(payload.status, 'ok');
+    assert.equal(payload.data.ingestion_id, 'demo-ingest');
+    assert.equal(payload.data.latest_event, 'Processing chunk 2 of 4');
   });
 });

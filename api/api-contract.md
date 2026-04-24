@@ -10,6 +10,7 @@ Uploads one structured `.md` or `.txt` manual and runs the Gemini extraction pip
 - Fields:
   - `file`: required upload
   - `replace_existing`: optional boolean, default `true`
+  - `ingestion_id`: optional client-generated id used to poll live processing activity
 
 ### Success response
 
@@ -53,7 +54,39 @@ Uploads one structured `.md` or `.txt` manual and runs the Gemini extraction pip
 ```bash
 curl -X POST http://localhost:8000/ingest \
   -F "file=@api/examples/demo_system.md" \
-  -F "replace_existing=true"
+  -F "replace_existing=true" \
+  -F "ingestion_id=0f31b0d0-dad1-4f9c-b86d-84d2db4d6f1e"
+```
+
+## GET /ingest/{ingestion_id}/events
+
+Returns the current processing state plus recent backend ingestion events for the given run. The frontend can poll this endpoint while `/ingest` is still executing so the UI reflects real chunk-by-chunk progress.
+
+### Success response
+
+```json
+{
+  "status": "ok",
+  "data": {
+    "ingestion_id": "0f31b0d0-dad1-4f9c-b86d-84d2db4d6f1e",
+    "state": "running",
+    "filename": "demo_system.md",
+    "chunks_total": 3,
+    "current_chunk": 2,
+    "started_at": "2026-04-08T19:22:51.184Z",
+    "completed_at": null,
+    "latest_event": "Processing chunk 2.",
+    "events": [
+      {
+        "timestamp": "2026-04-08T19:22:54.102Z",
+        "level": "INFO",
+        "event": "ingest_chunk_started",
+        "message": "Processing chunk 2.",
+        "chunk_index": 2
+      }
+    ]
+  }
+}
 ```
 
 ## GET /graph

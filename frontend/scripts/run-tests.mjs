@@ -53,6 +53,9 @@ for (const testFile of testFiles) {
     outdir: outDir,
     bundle: shouldBundle,
     format: 'esm',
+    outExtension: {
+      '.js': '.mjs',
+    },
     platform: 'node',
     target: 'node22',
     jsx: 'automatic',
@@ -69,7 +72,7 @@ for (const testFile of testFiles) {
 const compiledTests = testFiles.map((file) =>
   path.join(
     outDir,
-    path.relative(testsDir, file).replace(/\.(ts|tsx|jsx)$/, '.js')
+    path.relative(testsDir, file).replace(/\.(ts|tsx|js|jsx)$/, '.mjs')
   )
 );
 

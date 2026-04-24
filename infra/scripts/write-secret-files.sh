@@ -6,6 +6,8 @@ SECRETS_DIR="${SECRETS_DIR:-$ROOT_DIR/infra/secrets}"
 NEO4J_USER="${NEO4J_USER:-neo4j}"
 NEO4J_PASSWORD="${NEO4J_PASSWORD:-}"
 GEMINI_API_KEY="${GEMINI_API_KEY:-}"
+GRAFANA_ADMIN_USER="${GRAFANA_ADMIN_USER:-}"
+GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-}"
 
 if [[ -z "$NEO4J_PASSWORD" ]]; then
   echo "NEO4J_PASSWORD cannot be empty" >&2
@@ -21,14 +23,28 @@ if [[ -z "$GEMINI_API_KEY" ]]; then
   GEMINI_API_KEY="replace-me"
 fi
 
+if [[ -z "$GRAFANA_ADMIN_USER" ]]; then
+  echo "GRAFANA_ADMIN_USER cannot be empty" >&2
+  exit 1
+fi
+
+if [[ -z "$GRAFANA_ADMIN_PASSWORD" ]]; then
+  echo "GRAFANA_ADMIN_PASSWORD cannot be empty" >&2
+  exit 1
+fi
+
 mkdir -p "$SECRETS_DIR"
 printf '%s/%s' "$NEO4J_USER" "$NEO4J_PASSWORD" > "$SECRETS_DIR/neo4j_auth.txt"
 printf '%s' "$NEO4J_USER" > "$SECRETS_DIR/neo4j_user.txt"
 printf '%s' "$NEO4J_PASSWORD" > "$SECRETS_DIR/neo4j_password.txt"
 printf '%s' "$GEMINI_API_KEY" > "$SECRETS_DIR/gemini_api_key.txt"
+printf '%s' "$GRAFANA_ADMIN_USER" > "$SECRETS_DIR/grafana_admin_user.txt"
+printf '%s' "$GRAFANA_ADMIN_PASSWORD" > "$SECRETS_DIR/grafana_admin_password.txt"
 
 echo "Wrote:"
 echo "  - $SECRETS_DIR/neo4j_auth.txt"
 echo "  - $SECRETS_DIR/neo4j_user.txt"
 echo "  - $SECRETS_DIR/neo4j_password.txt"
 echo "  - $SECRETS_DIR/gemini_api_key.txt"
+echo "  - $SECRETS_DIR/grafana_admin_user.txt"
+echo "  - $SECRETS_DIR/grafana_admin_password.txt"

@@ -82,6 +82,8 @@ jobs:
           printf '%s' 'neo4j' > infra/secrets/neo4j_user.txt
           printf '%s' 'ci-password' > infra/secrets/neo4j_password.txt
           printf '%s' 'ci-gemini-placeholder' > infra/secrets/gemini_api_key.txt
+          printf '%s' 'ci-grafana-admin' > infra/secrets/grafana_admin_user.txt
+          printf '%s' 'ci-grafana-password' > infra/secrets/grafana_admin_password.txt
 
       - name: Compose up (smoke test)
         env:
@@ -117,6 +119,34 @@ jobs:
           docker compose logs --tail=100
           exit 1
 
+      - name: Verify Grafana health
+        run: |
+          check_url() {
+            local url="$1"
+            if ! curl -fsS "$url" > /dev/null; then
+              echo "Check failed: $url"
+              return 1
+            fi
+          }
+
+          for i in {1..60}; do
+            echo "Grafana health attempt $i/60"
+            if check_url http://localhost:3001/api/health; then
+              echo "Grafana health check passed"
+              exit 0
+            fi
+            if [ "$i" -eq 20 ] || [ "$i" -eq 40 ]; then
+              docker compose ps
+              docker compose logs --tail=50 grafana
+            fi
+            sleep 3
+          done
+
+          echo "Grafana health check failed"
+          docker compose ps
+          docker compose logs --tail=100 grafana
+          exit 1
+
       - name: Show running services
         run: docker compose ps
 
@@ -128,7 +158,7 @@ jobs:
         if: always()
         run: |
           docker compose down -v
-          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
+          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt
 
   publish-promotable-images:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
@@ -299,7 +329,7 @@ jobs:
 
       - name: Cleanup staging secret files
         if: always()
-        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
+        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt
 
   validate-staging-config-pr:
     if: |
@@ -320,6 +350,8 @@ jobs:
           printf '%s' 'neo4j' > infra/secrets/neo4j_user.txt
           printf '%s' 'staging-pr-password' > infra/secrets/neo4j_password.txt
           printf '%s' 'staging-pr-gemini-placeholder' > infra/secrets/gemini_api_key.txt
+          printf '%s' 'staging-pr-grafana-admin' > infra/secrets/grafana_admin_user.txt
+          printf '%s' 'staging-pr-grafana-password' > infra/secrets/grafana_admin_password.txt
 
       - name: Validate compose config (staging PR)
         env:
@@ -334,7 +366,7 @@ jobs:
 
       - name: Cleanup staging secret files
         if: always()
-        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
+        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt
 
   validate-production-config:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -383,7 +415,7 @@ jobs:
 
       - name: Cleanup production secret files
         if: always()
-        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
+        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt
 
   validate-production-config-pr:
     if: |
@@ -404,6 +436,8 @@ jobs:
           printf '%s' 'neo4j' > infra/secrets/neo4j_user.txt
           printf '%s' 'production-pr-password' > infra/secrets/neo4j_password.txt
           printf '%s' 'production-pr-gemini-placeholder' > infra/secrets/gemini_api_key.txt
+          printf '%s' 'production-pr-grafana-admin' > infra/secrets/grafana_admin_user.txt
+          printf '%s' 'production-pr-grafana-password' > infra/secrets/grafana_admin_password.txt
 
       - name: Validate compose config (production PR)
         env:
@@ -418,7 +452,7 @@ jobs:
 
       - name: Cleanup production secret files
         if: always()
-        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
+        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt
 
   verify-promotable-images:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
@@ -452,6 +486,8 @@ jobs:
           printf '%s' 'neo4j' > infra/secrets/neo4j_user.txt
           printf '%s' 'ci-password' > infra/secrets/neo4j_password.txt
           printf '%s' 'ci-gemini-placeholder' > infra/secrets/gemini_api_key.txt
+          printf '%s' 'ci-grafana-admin' > infra/secrets/grafana_admin_user.txt
+          printf '%s' 'ci-grafana-password' > infra/secrets/grafana_admin_password.txt
 
       - name: Pull published images
         env:
@@ -496,6 +532,34 @@ jobs:
           docker compose logs --tail=100
           exit 1
 
+      - name: Verify published image Grafana health
+        run: |
+          check_url() {
+            local url="$1"
+            if ! curl -fsS "$url" > /dev/null; then
+              echo "Check failed: $url"
+              return 1
+            fi
+          }
+
+          for i in {1..60}; do
+            echo "Published image Grafana attempt $i/60"
+            if check_url http://localhost:3001/api/health; then
+              echo "Published image Grafana health check passed"
+              exit 0
+            fi
+            if [ "$i" -eq 20 ] || [ "$i" -eq 40 ]; then
+              docker compose ps
+              docker compose logs --tail=50 grafana
+            fi
+            sleep 3
+          done
+
+          echo "Published image Grafana health check failed"
+          docker compose ps
+          docker compose logs --tail=100 grafana
+          exit 1
+
       - name: Show compose logs on failure
         if: failure()
         run: docker compose logs --tail=200
@@ -504,7 +568,7 @@ jobs:
         if: always()
         run: |
           docker compose down -v
-          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
+          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt
 
   deploy-staging:
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
@@ -584,10 +648,39 @@ jobs:
           docker compose logs --tail=100
           exit 1
 
+      - name: Verify staging Grafana health
+        run: |
+          check_url() {
+            local url="$1"
+            if ! curl -fsS "$url" > /dev/null; then
+              echo "Check failed: $url"
+              return 1
+            fi
+          }
+
+          for i in {1..60}; do
+            echo "Staging Grafana attempt $i/60"
+            if check_url http://localhost:3001/api/health; then
+              echo "Staging Grafana health check passed"
+              exit 0
+            fi
+            if [ "$i" -eq 20 ] || [ "$i" -eq 40 ]; then
+              docker compose ps
+              docker compose logs --tail=50 grafana
+            fi
+            sleep 3
+          done
+
+          echo "Staging Grafana health check failed"
+          docker compose ps
+          docker compose logs --tail=100 grafana
+          exit 1
+
       - name: Record staging deployment evidence
         run: |
           docker compose ps
           curl -fsS http://localhost:8000/metrics
+          curl -fsS http://localhost:3001/api/health
 
       - name: Show staging logs on failure
         if: failure()
@@ -597,7 +690,7 @@ jobs:
         if: always()
         run: |
           docker compose down -v
-          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
+          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt
 
   deploy-production:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -677,10 +770,39 @@ jobs:
           docker compose logs --tail=100
           exit 1
 
+      - name: Verify production Grafana health
+        run: |
+          check_url() {
+            local url="$1"
+            if ! curl -fsS "$url" > /dev/null; then
+              echo "Check failed: $url"
+              return 1
+            fi
+          }
+
+          for i in {1..60}; do
+            echo "Production Grafana attempt $i/60"
+            if check_url http://localhost:3001/api/health; then
+              echo "Production Grafana health check passed"
+              exit 0
+            fi
+            if [ "$i" -eq 20 ] || [ "$i" -eq 40 ]; then
+              docker compose ps
+              docker compose logs --tail=50 grafana
+            fi
+            sleep 3
+          done
+
+          echo "Production Grafana health check failed"
+          docker compose ps
+          docker compose logs --tail=100 grafana
+          exit 1
+
       - name: Record production deployment evidence
         run: |
           docker compose ps
           curl -fsS http://localhost:8000/metrics
+          curl -fsS http://localhost:3001/api/health
 
       - name: Show production logs on failure
         if: failure()
@@ -690,4 +812,4 @@ jobs:
         if: always()
         run: |
           docker compose down -v
-          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt
+          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt
