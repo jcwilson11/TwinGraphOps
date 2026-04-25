@@ -184,3 +184,37 @@ test('processing status route proxies the backend event stream endpoint', async 
     assert.equal(payload.data.latest_event, 'Processing chunk 2 of 4');
   });
 });
+
+test('document routes proxy graph events and uploads to the backend', async () => {
+  const requestedUrls: string[] = [];
+  const requestedMethods: string[] = [];
+
+  const app = createApp({
+    distDir: path.join(tmpdir(), 'twingraphops-does-not-exist'),
+    fetchImpl: async (url: string | URL | Request, init?: RequestInit) => {
+      requestedUrls.push(String(url));
+      requestedMethods.push(init?.method ?? 'GET');
+      return new Response(JSON.stringify({ status: 'ok', data: { source: 'document', nodes: [], edges: [] } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    await fetch(`${baseUrl}/api/document/graph`);
+    await fetch(`${baseUrl}/api/document/ingest/doc-1/events`);
+    await fetch(`${baseUrl}/api/document/ingest`, {
+      method: 'POST',
+      headers: { 'content-type': 'multipart/form-data; boundary=test' },
+      body: '--test\r\n\r\n--test--\r\n',
+    });
+
+    assert.deepEqual(requestedUrls, [
+      'http://api:8000/document/graph',
+      'http://api:8000/document/ingest/doc-1/events',
+      'http://api:8000/document/ingest',
+    ]);
+    assert.deepEqual(requestedMethods, ['GET', 'GET', 'POST']);
+  });
+});

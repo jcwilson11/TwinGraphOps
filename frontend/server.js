@@ -52,6 +52,9 @@ function classifyPath(requestPath) {
   if (/^\/api\/ingest\/[^/]+\/events$/.test(requestPath)) {
     return '/api/ingest/:ingestionId/events';
   }
+  if (/^\/api\/document\/ingest\/[^/]+\/events$/.test(requestPath)) {
+    return '/api/document/ingest/:ingestionId/events';
+  }
   if (requestPath.startsWith('/assets/')) {
     return '/assets/*';
   }
@@ -327,6 +330,31 @@ function createApp(options = {}) {
         return;
       }
 
+      if (req.method === 'POST' && pathname === '/api/document/ingest') {
+        try {
+          const body = await readRequestBody(req);
+          const response = await fetchImpl(`${config.apiBaseUrl}/document/ingest`, {
+            method: 'POST',
+            headers: {
+              'content-type': req.headers['content-type'] || '',
+              Accept: 'application/json',
+            },
+            body,
+          });
+
+          const text = await response.text();
+          sendText(
+            res,
+            response.status,
+            text,
+            response.headers.get('content-type') || 'application/json; charset=utf-8'
+          );
+        } catch (error) {
+          sendProxyFailure(res, error);
+        }
+        return;
+      }
+
       const processingEventsMatch =
         req.method === 'GET' ? pathname.match(/^\/api\/ingest\/([^/]+)\/events$/) : null;
       if (processingEventsMatch) {
@@ -339,8 +367,25 @@ function createApp(options = {}) {
         return;
       }
 
+      const documentProcessingEventsMatch =
+        req.method === 'GET' ? pathname.match(/^\/api\/document\/ingest\/([^/]+)\/events$/) : null;
+      if (documentProcessingEventsMatch) {
+        const ingestionId = documentProcessingEventsMatch[1];
+        await proxyJson(
+          res,
+          'GET',
+          `${config.apiBaseUrl}/document/ingest/${encodeURIComponent(ingestionId)}/events${search}`
+        );
+        return;
+      }
+
       if (req.method === 'GET' && pathname === '/api/graph') {
         await proxyJson(res, 'GET', `${config.apiBaseUrl}/graph${search}`);
+        return;
+      }
+
+      if (req.method === 'GET' && pathname === '/api/document/graph') {
+        await proxyJson(res, 'GET', `${config.apiBaseUrl}/document/graph${search}`);
         return;
       }
 

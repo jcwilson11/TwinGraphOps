@@ -26,6 +26,21 @@ export interface IngestResponse {
   risk_nodes_scored: number;
 }
 
+export interface DocumentIngestResponse {
+  ingestion_id: string;
+  filename: string;
+  source: string;
+  chunks_total: number;
+  markdown_parts_created: number;
+  page_markers_detected: boolean;
+  total_pages: number;
+  artifacts_path: string;
+  replaced_existing: boolean;
+  nodes_created: number;
+  edges_created: number;
+  evidence_items: number;
+}
+
 export interface ProcessingEvent {
   timestamp: string | null;
   level: string | null;
@@ -87,4 +102,47 @@ export interface ImpactResponse {
   component_id: string;
   impacted_components: string[];
   impact_count: number;
+}
+
+export interface ApiDocumentEvidence {
+  quote: string;
+  page_start: number | null;
+  page_end: number | null;
+}
+
+export interface ApiDocumentSource {
+  document_name: string;
+  chunk_file: string;
+  chunk_id: string;
+  pdf_page_start: number | null;
+  pdf_page_end: number | null;
+}
+
+export interface ApiDocumentNode {
+  id: string;
+  label: string;
+  kind: string;
+  canonical_name: string;
+  aliases: string[];
+  summary: string;
+  evidence: ApiDocumentEvidence[];
+  sources: ApiDocumentSource[];
+  degree: number;
+  source: string;
+}
+
+export interface ApiDocumentEdge {
+  id: string;
+  source: string;
+  target: string;
+  type: string;
+  summary: string;
+  evidence: ApiDocumentEvidence[];
+  source_chunk: ApiDocumentSource | null;
+}
+
+export interface ApiDocumentGraphData {
+  source: string;
+  nodes: ApiDocumentNode[];
+  edges: ApiDocumentEdge[];
 }

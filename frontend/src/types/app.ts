@@ -1,4 +1,4 @@
-import type { IngestResponse, ProcessingStatus } from './api';
+import type { DocumentIngestResponse, IngestResponse, ProcessingStatus } from './api';
 
 export type UploadPhase =
   | 'idle'
@@ -102,6 +102,73 @@ export interface UploadState {
 export interface GraphState {
   status: LoadStatus;
   data: GraphData | null;
+  error: string | null;
+  lastLoadedAt: number | null;
+}
+
+export interface DocumentEvidence {
+  quote: string;
+  pageStart: number | null;
+  pageEnd: number | null;
+}
+
+export interface DocumentSource {
+  documentName: string;
+  chunkFile: string;
+  chunkId: string;
+  pdfPageStart: number | null;
+  pdfPageEnd: number | null;
+}
+
+export interface DocumentNode {
+  id: string;
+  label: string;
+  kind: string;
+  canonicalName: string;
+  aliases: string[];
+  summary: string;
+  evidence: DocumentEvidence[];
+  sources: DocumentSource[];
+  degree: number;
+  source: string;
+  val: number;
+}
+
+export interface DocumentEdge {
+  id: string;
+  source: string | GraphLinkEndpointRef;
+  target: string | GraphLinkEndpointRef;
+  type: string;
+  summary: string;
+  evidence: DocumentEvidence[];
+  sourceChunk: DocumentSource | null;
+}
+
+export interface DocumentGraphData {
+  source: string;
+  nodes: DocumentNode[];
+  links: DocumentEdge[];
+  nodeIndex: Record<string, DocumentNode>;
+  kindTypes: string[];
+  relationTypes: string[];
+}
+
+export interface DocumentUploadState {
+  phase: UploadPhase;
+  selectedFile: File | null;
+  error: string | null;
+  statusMessage: string;
+  ingestionId: string | null;
+  ingestion: DocumentIngestResponse | null;
+  processingStatus: ProcessingStatus | null;
+  startedAt: number | null;
+  completedAt: number | null;
+  retryCount: number;
+}
+
+export interface DocumentGraphState {
+  status: LoadStatus;
+  data: DocumentGraphData | null;
   error: string | null;
   lastLoadedAt: number | null;
 }

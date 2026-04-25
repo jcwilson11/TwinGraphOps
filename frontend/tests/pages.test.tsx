@@ -3,7 +3,7 @@ import test from 'node:test';
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
-import { createMockContext, createSampleGraphData, installRuntimeWindowConfig } from './test-utils';
+import { createMockContext, createSampleDocumentGraphData, createSampleGraphData, installRuntimeWindowConfig } from './test-utils';
 
 installRuntimeWindowConfig();
 
@@ -11,6 +11,8 @@ const { AppContext } = await import('../src/state/AppContext');
 const { default: LandingPage } = await import('../src/pages/LandingPage');
 const { default: ProcessingPage } = await import('../src/pages/ProcessingPage');
 const { default: SystemOverview } = await import('../src/components/SystemOverview');
+const { default: DocumentUploadPage } = await import('../src/pages/DocumentUploadPage');
+const { default: DocumentOverview } = await import('../src/components/DocumentOverview');
 
 function renderWithContext(
   element: ReactNode,
@@ -30,6 +32,7 @@ test('landing page renders the upload workspace content', () => {
   assert.match(html, /TwinGraphOps/);
   assert.match(html, /Upload System Documentation/);
   assert.match(html, /Supported formats: \.md and \.txt/);
+  assert.match(html, /Document Workspace/);
 });
 
 test('processing page renders the active processing state', () => {
@@ -61,4 +64,22 @@ test('system overview renders the loaded workspace summary', () => {
   assert.match(html, /Relationships/);
   assert.match(html, /Most Connected Components/);
   assert.match(html, /API Service/);
+});
+
+test('document upload page renders pdf markdown and text support', () => {
+  const html = renderWithContext(<DocumentUploadPage />, {}, ['/documents']);
+
+  assert.match(html, /Document Knowledge Graphs/);
+  assert.match(html, /Supported formats: \.pdf, \.md, and \.txt/);
+  assert.match(html, /Risk Workspace/);
+});
+
+test('document overview renders the loaded document graph summary', () => {
+  const graphData = createSampleDocumentGraphData();
+  const html = renderToStaticMarkup(<DocumentOverview graphData={graphData} />);
+
+  assert.match(html, /Document Overview/);
+  assert.match(html, /Document Nodes/);
+  assert.match(html, /Evidence Items/);
+  assert.match(html, /Retention Policy/);
 });

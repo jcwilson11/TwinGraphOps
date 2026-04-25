@@ -1,5 +1,27 @@
-import type { ApiGraphData, ApiGraphEdge, ApiGraphNode, ImpactResponse, RiskResponse } from '../types/api';
-import type { GraphData, GraphEdge, GraphNode, NodeDetails, NodeReference } from '../types/app';
+import type {
+  ApiDocumentEdge,
+  ApiDocumentEvidence,
+  ApiDocumentGraphData,
+  ApiDocumentNode,
+  ApiDocumentSource,
+  ApiGraphData,
+  ApiGraphEdge,
+  ApiGraphNode,
+  ImpactResponse,
+  RiskResponse,
+} from '../types/api';
+import type {
+  DocumentEdge,
+  DocumentEvidence,
+  DocumentGraphData,
+  DocumentNode,
+  DocumentSource,
+  GraphData,
+  GraphEdge,
+  GraphNode,
+  NodeDetails,
+  NodeReference,
+} from '../types/app';
 
 function ensureString(value: unknown, label: string) {
   if (typeof value !== 'string') {
@@ -146,5 +168,70 @@ export function adaptNodeDetails(
       { label: 'Dependency Span', value: String(node.dependencySpan) },
       { label: 'Source', value: node.source },
     ],
+  };
+}
+
+function normalizeDocumentEvidence(evidence: ApiDocumentEvidence): DocumentEvidence {
+  return {
+    quote: ensureString(evidence.quote, 'document.evidence.quote'),
+    pageStart: evidence.page_start,
+    pageEnd: evidence.page_end,
+  };
+}
+
+function normalizeDocumentSource(source: ApiDocumentSource): DocumentSource {
+  return {
+    documentName: ensureString(source.document_name, 'document.source.document_name'),
+    chunkFile: ensureString(source.chunk_file, 'document.source.chunk_file'),
+    chunkId: ensureString(source.chunk_id, 'document.source.chunk_id'),
+    pdfPageStart: source.pdf_page_start,
+    pdfPageEnd: source.pdf_page_end,
+  };
+}
+
+function normalizeDocumentNode(node: ApiDocumentNode): DocumentNode {
+  const degree = ensureNumber(node.degree, 'document.node.degree');
+  return {
+    id: ensureString(node.id, 'document.node.id'),
+    label: ensureString(node.label, 'document.node.label'),
+    kind: ensureString(node.kind, 'document.node.kind'),
+    canonicalName: ensureString(node.canonical_name, 'document.node.canonical_name'),
+    aliases: ensureArray<string>(node.aliases, 'document.node.aliases'),
+    summary: ensureString(node.summary, 'document.node.summary'),
+    evidence: ensureArray<ApiDocumentEvidence>(node.evidence, 'document.node.evidence').map(normalizeDocumentEvidence),
+    sources: ensureArray<ApiDocumentSource>(node.sources, 'document.node.sources').map(normalizeDocumentSource),
+    degree,
+    source: ensureString(node.source, 'document.node.source'),
+    val: 16 + Math.min(18, Math.round(degree * 4)),
+  };
+}
+
+function normalizeDocumentEdge(edge: ApiDocumentEdge): DocumentEdge {
+  return {
+    id: ensureString(edge.id, 'document.edge.id'),
+    source: ensureString(edge.source, 'document.edge.source'),
+    target: ensureString(edge.target, 'document.edge.target'),
+    type: ensureString(edge.type, 'document.edge.type'),
+    summary: ensureString(edge.summary, 'document.edge.summary'),
+    evidence: ensureArray<ApiDocumentEvidence>(edge.evidence, 'document.edge.evidence').map(normalizeDocumentEvidence),
+    sourceChunk: edge.source_chunk ? normalizeDocumentSource(edge.source_chunk) : null,
+  };
+}
+
+export function adaptDocumentGraph(apiGraph: ApiDocumentGraphData): DocumentGraphData {
+  const source = ensureString(apiGraph.source, 'document.graph.source');
+  const nodes = ensureArray<ApiDocumentNode>(apiGraph.nodes, 'document.graph.nodes').map(normalizeDocumentNode);
+  const links = ensureArray<ApiDocumentEdge>(apiGraph.edges, 'document.graph.edges').map(normalizeDocumentEdge);
+  const nodeIndex = Object.fromEntries(nodes.map((node) => [node.id, node]));
+  const kindTypes = [...new Set(nodes.map((node) => node.kind))].sort();
+  const relationTypes = [...new Set(links.map((edge) => edge.type))].sort();
+
+  return {
+    source,
+    nodes,
+    links,
+    nodeIndex,
+    kindTypes,
+    relationTypes,
   };
 }

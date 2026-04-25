@@ -14,7 +14,17 @@ import main
 from gemini_client import GeminiExtractionError
 from observability import Observability
 from graph_pipeline import build_demo_graph, compute_graph_metrics
-from models import ChunkGraph, ChunkEdge, ChunkNode, MergedGraph, model_dump_compat
+from models import (
+    ChunkGraph,
+    ChunkEdge,
+    ChunkNode,
+    DocumentChunkGraph,
+    DocumentChunkNode,
+    DocumentEvidence,
+    DocumentSource,
+    MergedGraph,
+    model_dump_compat,
+)
 
 
 class FakeExtractor:
@@ -30,6 +40,10 @@ class FakeExtractor:
         if self.error is not None:
             raise self.error
         return self.graph, model_dump_compat(self.graph)
+
+
+class FakeDocumentExtractor(FakeExtractor):
+    pass
 
 
 class TwinGraphOpsApiTests(unittest.TestCase):
@@ -121,6 +135,130 @@ class TwinGraphOpsApiTests(unittest.TestCase):
         response = self.client.post(
             "/ingest",
             files={"file": ("manual.pdf", io.BytesIO(b"pdf"), "application/pdf")},
+        )
+        self.assertEqual(response.status_code, 415)
+        self.assertEqual(response.json()["error"]["code"], "unsupported_file_type")
+
+    def test_document_ingest_accepts_markdown_and_persists_document_graph(self):
+        chunk_graph = DocumentChunkGraph(
+            source=DocumentSource(
+                document_name="manual.md",
+                chunk_file="chunks/source_document_part_001.md",
+                chunk_id="source_document_part_001",
+            ),
+            nodes=[
+                DocumentChunkNode(
+                    id="source_document_part_001:N1",
+                    label="Retention Policy",
+                    kind="requirement",
+                    canonical_name="Retention Policy",
+                    evidence=[DocumentEvidence(quote="Records are retained for 7 years.")],
+                )
+            ],
+            edges=[],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            main, "get_gemini_document_client", return_value=FakeDocumentExtractor(graph=chunk_graph)
+        ), patch.object(main, "persist_document_graph_to_store") as persist_graph, patch.object(
+            main, "get_artifacts_root", return_value=Path(tmpdir)
+        ):
+            response = self.client.post(
+                "/document/ingest",
+                files={"file": ("manual.md", io.BytesIO(b"Records are retained for 7 years."), "text/markdown")},
+                data={"ingestion_id": "doc_ingest-01"},
+            )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()["data"]
+            self.assertEqual(payload["source"], "document")
+            self.assertEqual(payload["nodes_created"], 1)
+            self.assertEqual(payload["markdown_parts_created"], 1)
+            self.assertFalse(payload["page_markers_detected"])
+            self.assertEqual(payload["total_pages"], 0)
+            self.assertTrue((Path(payload["artifacts_path"]) / "merged_document_graph.json").exists())
+            self.assertTrue((Path(payload["artifacts_path"]) / "chunks" / "source_document_part_001.md").exists())
+            self.assertTrue((Path(payload["artifacts_path"]) / "chunks" / "chunking_meta.txt").exists())
+
+        persist_graph.assert_called_once()
+
+    def test_document_ingest_accepts_pdf_and_runs_conversion(self):
+        chunk_graph = DocumentChunkGraph(
+            source=DocumentSource(
+                document_name="manual.pdf",
+                chunk_file="chunks/source_document_part_001.md",
+                chunk_id="source_document_part_001",
+                pdf_page_start=1,
+                pdf_page_end=1,
+            ),
+            nodes=[
+                DocumentChunkNode(
+                    id="source_document_part_001:N1",
+                    label="PDF Policy",
+                    kind="section",
+                    canonical_name="PDF Policy",
+                    evidence=[DocumentEvidence(quote="PDF policy text", page_start=1, page_end=1)],
+                )
+            ],
+            edges=[],
+        )
+        converted_markdown = "\n\n".join(
+            [
+                f"[PDF_PAGE_START={page}]\nPDF policy text page {page}\n[PDF_PAGE_END={page}]"
+                for page in range(1, 246)
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            main, "convert_pdf_bytes_to_markdown", return_value=converted_markdown
+        ) as convert_pdf, patch.object(
+            main, "get_gemini_document_client", return_value=FakeDocumentExtractor(graph=chunk_graph)
+        ), patch.object(main, "persist_document_graph_to_store"), patch.object(
+            main, "get_artifacts_root", return_value=Path(tmpdir)
+        ):
+            response = self.client.post(
+                "/document/ingest",
+                files={"file": ("manual.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+            )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()["data"]
+            self.assertEqual(payload["filename"], "manual.pdf")
+            self.assertEqual(payload["chunks_total"], 18)
+            self.assertEqual(payload["markdown_parts_created"], 18)
+            self.assertTrue(payload["page_markers_detected"])
+            self.assertEqual(payload["total_pages"], 245)
+            self.assertTrue((Path(payload["artifacts_path"]) / "source_document.pdf").exists())
+            self.assertTrue((Path(payload["artifacts_path"]) / "source_document.md").exists())
+            part_path = Path(payload["artifacts_path"]) / "chunks" / "source_document_part_001.md"
+            last_part_path = Path(payload["artifacts_path"]) / "chunks" / "source_document_part_018.md"
+            self.assertTrue(part_path.exists())
+            self.assertTrue(part_path.read_text(encoding="utf-8").startswith("[PDF_PAGE_START=1]"))
+            self.assertTrue(last_part_path.exists())
+            self.assertIn("[PDF_PAGE_START=237]", last_part_path.read_text(encoding="utf-8"))
+
+        convert_pdf.assert_called_once()
+
+    def test_document_ingest_rejects_pdf_when_conversion_lacks_page_markers(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            main, "convert_pdf_bytes_to_markdown", return_value="# Plain converted markdown\n\nNo page markers."
+        ), patch.object(main, "get_gemini_document_client"), patch.object(
+            main, "persist_document_graph_to_store"
+        ) as persist_graph, patch.object(
+            main, "get_artifacts_root", return_value=Path(tmpdir)
+        ):
+            response = self.client.post(
+                "/document/ingest",
+                files={"file": ("manual.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+            )
+
+            self.assertEqual(response.status_code, 422)
+            self.assertEqual(response.json()["error"]["code"], "pdf_page_markers_missing")
+
+        persist_graph.assert_not_called()
+
+    def test_document_ingest_rejects_unsupported_extension(self):
+        response = self.client.post(
+            "/document/ingest",
+            files={"file": ("image.png", io.BytesIO(b"png"), "image/png")},
         )
         self.assertEqual(response.status_code, 415)
         self.assertEqual(response.json()["error"]["code"], "unsupported_file_type")

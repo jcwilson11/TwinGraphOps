@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from graph_pipeline import GraphValidationError, validate_chunk_graph_payload
-from models import ChunkGraph, model_dump_compat, model_json_schema_compat
+from document_pipeline import validate_document_chunk_graph_payload
+from models import ChunkGraph, DocumentChunkGraph, model_dump_compat, model_json_schema_compat
 
 
 @dataclass
@@ -32,6 +33,29 @@ def _is_timeout_error(error: Exception) -> bool:
 
     message = str(error).lower()
     return "timed out" in message or "timeout" in message
+
+
+def _is_unavailable_error(error: Exception) -> bool:
+    status_code = getattr(error, "status_code", None) or getattr(error, "code", None)
+    if status_code == 503 or str(status_code) == "503":
+        return True
+
+    message = str(error).lower()
+    return (
+        "503" in message
+        or "unavailable" in message
+        or "deadline_exceeded" in message
+        or "deadline exceeded" in message
+        or "high demand" in message
+    )
+
+
+def _request_error_code(error: Exception) -> str:
+    if _is_timeout_error(error):
+        return "gemini_request_timeout"
+    if _is_unavailable_error(error):
+        return "gemini_request_unavailable"
+    return "gemini_request_failed"
 
 
 class GeminiGraphExtractor:
@@ -115,19 +139,71 @@ class GeminiGraphExtractor:
                 )
             except Exception as exc:
                 last_error = GeminiExtractionError(
-                    code="gemini_request_timeout" if _is_timeout_error(exc) else "gemini_request_failed",
+                    code=_request_error_code(exc),
                     chunk_index=chunk_index,
                     validation_errors=[str(exc)],
                     raw_payload=raw_payload,
                 )
 
             if attempt < self.max_retries and self.backoff_seconds > 0:
-                time.sleep(self.backoff_seconds * (attempt + 1))
+                time.sleep(self.backoff_seconds * (2**attempt))
 
         if last_error is None:
             raise GeminiExtractionError(
                 code="gemini_request_failed",
                 chunk_index=chunk_index,
                 validation_errors=["Gemini extraction failed for an unknown reason."],
+            )
+        raise last_error
+
+
+class GeminiDocumentGraphExtractor(GeminiGraphExtractor):
+    def _generate_payload(self, prompt: str):
+        from google.genai import types
+
+        return self.client.models.generate_content(
+            model=self.model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=model_json_schema_compat(DocumentChunkGraph),
+            ),
+        )
+
+    def extract_chunk(self, chunk_text: str, prompt: str, chunk_index: int) -> tuple[DocumentChunkGraph, Any]:
+        del chunk_text
+        self.last_attempts = 0
+        last_error: GeminiExtractionError | None = None
+        for attempt in range(self.max_retries + 1):
+            self.last_attempts = attempt + 1
+            raw_payload = None
+            try:
+                response = self._generate_payload(prompt)
+                raw_payload = self._response_to_payload(response)
+                graph = validate_document_chunk_graph_payload(raw_payload)
+                return graph, raw_payload
+            except GraphValidationError as exc:
+                last_error = GeminiExtractionError(
+                    code="gemini_document_extraction_failed",
+                    chunk_index=chunk_index,
+                    validation_errors=exc.validation_errors or [str(exc)],
+                    raw_payload=raw_payload,
+                )
+            except Exception as exc:
+                last_error = GeminiExtractionError(
+                    code=_request_error_code(exc),
+                    chunk_index=chunk_index,
+                    validation_errors=[str(exc)],
+                    raw_payload=raw_payload,
+                )
+
+            if attempt < self.max_retries and self.backoff_seconds > 0:
+                time.sleep(self.backoff_seconds * (2**attempt))
+
+        if last_error is None:
+            raise GeminiExtractionError(
+                code="gemini_request_failed",
+                chunk_index=chunk_index,
+                validation_errors=["Gemini document extraction failed for an unknown reason."],
             )
         raise last_error

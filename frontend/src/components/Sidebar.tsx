@@ -1,4 +1,4 @@
-import { BarChart3, List, Network, Shield, Upload } from 'lucide-react';
+import { BarChart3, FileText, List, Network, Shield, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Badge from './ui/Badge';
 import { formatLabel } from '../lib/selectors';
@@ -52,6 +52,18 @@ export default function Sidebar({ currentView, onViewChange, graphSource, nodeCo
             Active Graph: {graphSource ? formatLabel(graphSource) : 'Unknown'}
           </Badge>
         </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <button className="rounded-2xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white">
+            Risk
+          </button>
+          <button
+            onClick={() => navigate('/documents')}
+            className="rounded-2xl border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500 hover:text-white"
+          >
+            Documents
+          </button>
+        </div>
       </div>
 
       <nav className="flex-1 space-y-2 p-4">
@@ -83,6 +95,13 @@ export default function Sidebar({ currentView, onViewChange, graphSource, nodeCo
         >
           <Upload className="h-5 w-5" />
           <span>Upload New Document</span>
+        </button>
+        <button
+          onClick={() => navigate('/documents')}
+          className="mt-2 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-medium text-slate-400 transition hover:bg-slate-900 hover:text-white"
+        >
+          <FileText className="h-5 w-5" />
+          <span>Document Workspace</span>
         </button>
       </div>
     </aside>

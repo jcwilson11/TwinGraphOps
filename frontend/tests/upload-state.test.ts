@@ -5,7 +5,13 @@ import { installRuntimeWindowConfig } from './test-utils';
 installRuntimeWindowConfig();
 
 const stateModule = await import('../src/state/AppContext');
-const { createSelectedFileUploadState, getFileExtension, validateSelectedFile } = stateModule;
+const {
+  createSelectedDocumentFileUploadState,
+  createSelectedFileUploadState,
+  getFileExtension,
+  validateSelectedDocumentFile,
+  validateSelectedFile,
+} = stateModule;
 
 test('getFileExtension normalizes file extensions', () => {
   assert.equal(getFileExtension('manual.MD'), '.md');
@@ -38,4 +44,13 @@ test('validateSelectedFile accepts supported files and returns the selected-file
   const result = validateSelectedFile(file, 10 * 1024 * 1024);
 
   assert.deepEqual(result, createSelectedFileUploadState(file));
+});
+
+test('validateSelectedDocumentFile accepts pdf markdown and text files', () => {
+  for (const filename of ['policy.pdf', 'policy.md', 'policy.txt']) {
+    const file = new File(['hello'], filename);
+    const result = validateSelectedDocumentFile(file, 10 * 1024 * 1024);
+
+    assert.deepEqual(result, createSelectedDocumentFileUploadState(file));
+  }
 });
