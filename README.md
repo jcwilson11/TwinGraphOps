@@ -241,7 +241,11 @@ Grafana now uses the secret-backed admin credentials from your local bootstrap o
 
 The ingest pipeline accepts structured `.md` or `.txt` system manuals, chunks them, sends each chunk to Gemini for graph extraction, validates the JSON, writes the merged graph to Neo4j, and stores artifacts under `runtime/artifacts/`.
 
-By default, each Gemini request is bounded by `GEMINI_TIMEOUT_MS=30000` inside the API so a blocked upstream call fails closed instead of leaving `/ingest` pending indefinitely.
+By default, each Gemini request is bounded by `GEMINI_TIMEOUT_MS=300000` inside the API so a blocked upstream call fails closed instead of leaving `/ingest` pending indefinitely.
+
+That timeout is applied per Gemini request, not across the full ingest job. Because the backend sends one Gemini request per chunk, a 12-chunk upload can run much longer than 5 minutes overall as long as each individual request returns before its own timeout expires.
+
+The document workspace now uses an async submit-and-poll flow: `POST /document/ingest` returns quickly with an `ingestion_id`, then the frontend polls `/document/ingest/{ingestion_id}/events` until the background job succeeds or fails before loading the document graph.
 
 For larger manuals on a student/free-tier Gemini quota, the default runtime tuning now favors fewer timeouts without exploding request count:
 

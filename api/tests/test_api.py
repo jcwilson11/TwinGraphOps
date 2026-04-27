@@ -46,6 +46,18 @@ class FakeDocumentExtractor(FakeExtractor):
     pass
 
 
+class InlineThread:
+    def __init__(self, target=None, args=(), kwargs=None, daemon=None) -> None:
+        self._target = target
+        self._args = args
+        self._kwargs = kwargs or {}
+        self.daemon = daemon
+
+    def start(self) -> None:
+        if self._target is not None:
+            self._target(*self._args, **self._kwargs)
+
+
 class TwinGraphOpsApiTests(unittest.TestCase):
     def setUp(self):
         main.OBSERVABILITY = Observability()
@@ -161,7 +173,7 @@ class TwinGraphOpsApiTests(unittest.TestCase):
             main, "get_gemini_document_client", return_value=FakeDocumentExtractor(graph=chunk_graph)
         ), patch.object(main, "persist_document_graph_to_store") as persist_graph, patch.object(
             main, "get_artifacts_root", return_value=Path(tmpdir)
-        ):
+        ), patch.object(main, "Thread", InlineThread):
             response = self.client.post(
                 "/document/ingest",
                 files={"file": ("manual.md", io.BytesIO(b"Records are retained for 7 years."), "text/markdown")},
@@ -171,10 +183,10 @@ class TwinGraphOpsApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             payload = response.json()["data"]
             self.assertEqual(payload["source"], "document")
-            self.assertEqual(payload["nodes_created"], 1)
-            self.assertEqual(payload["markdown_parts_created"], 1)
-            self.assertFalse(payload["page_markers_detected"])
-            self.assertEqual(payload["total_pages"], 0)
+            self.assertIsNone(payload["nodes_created"])
+            self.assertIsNone(payload["markdown_parts_created"])
+            self.assertIsNone(payload["page_markers_detected"])
+            self.assertIsNone(payload["total_pages"])
             self.assertTrue((Path(payload["artifacts_path"]) / "merged_document_graph.json").exists())
             self.assertTrue((Path(payload["artifacts_path"]) / "chunks" / "source_document_part_001.md").exists())
             self.assertTrue((Path(payload["artifacts_path"]) / "chunks" / "chunking_meta.txt").exists())
@@ -213,7 +225,7 @@ class TwinGraphOpsApiTests(unittest.TestCase):
             main, "get_gemini_document_client", return_value=FakeDocumentExtractor(graph=chunk_graph)
         ), patch.object(main, "persist_document_graph_to_store"), patch.object(
             main, "get_artifacts_root", return_value=Path(tmpdir)
-        ):
+        ), patch.object(main, "Thread", InlineThread):
             response = self.client.post(
                 "/document/ingest",
                 files={"file": ("manual.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
@@ -222,10 +234,10 @@ class TwinGraphOpsApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             payload = response.json()["data"]
             self.assertEqual(payload["filename"], "manual.pdf")
-            self.assertEqual(payload["chunks_total"], 18)
-            self.assertEqual(payload["markdown_parts_created"], 18)
-            self.assertTrue(payload["page_markers_detected"])
-            self.assertEqual(payload["total_pages"], 245)
+            self.assertIsNone(payload["chunks_total"])
+            self.assertIsNone(payload["markdown_parts_created"])
+            self.assertIsNone(payload["page_markers_detected"])
+            self.assertIsNone(payload["total_pages"])
             self.assertTrue((Path(payload["artifacts_path"]) / "source_document.pdf").exists())
             self.assertTrue((Path(payload["artifacts_path"]) / "source_document.md").exists())
             part_path = Path(payload["artifacts_path"]) / "chunks" / "source_document_part_001.md"

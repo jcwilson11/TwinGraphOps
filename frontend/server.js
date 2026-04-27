@@ -10,7 +10,7 @@ function readConfig(overrides = {}) {
   const apiBaseUrl =
     overrides.apiBaseUrl || process.env.PUBLIC_API_BASE_URL || process.env.VITE_API_BASE_URL || 'http://api:8000';
   const maxUploadMb = Number(
-    overrides.maxUploadMb || process.env.PUBLIC_MAX_UPLOAD_MB || process.env.VITE_MAX_UPLOAD_MB || 10
+    overrides.maxUploadMb || process.env.PUBLIC_MAX_UPLOAD_MB || process.env.VITE_MAX_UPLOAD_MB || 50
   );
   const processingTimeoutMs = Number(
     overrides.processingTimeoutMs || process.env.PUBLIC_PROCESSING_TIMEOUT_MS || process.env.VITE_PROCESSING_TIMEOUT_MS || 300000

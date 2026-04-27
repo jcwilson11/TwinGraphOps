@@ -30,15 +30,15 @@ export interface DocumentIngestResponse {
   ingestion_id: string;
   filename: string;
   source: string;
-  chunks_total: number;
-  markdown_parts_created: number;
-  page_markers_detected: boolean;
-  total_pages: number;
+  chunks_total: number | null;
+  markdown_parts_created: number | null;
+  page_markers_detected: boolean | null;
+  total_pages: number | null;
   artifacts_path: string;
   replaced_existing: boolean;
-  nodes_created: number;
-  edges_created: number;
-  evidence_items: number;
+  nodes_created: number | null;
+  edges_created: number | null;
+  evidence_items: number | null;
 }
 
 export interface ProcessingEvent {

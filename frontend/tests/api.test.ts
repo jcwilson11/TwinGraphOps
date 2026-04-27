@@ -3,7 +3,7 @@ import test from 'node:test';
 import { installRuntimeWindowConfig } from './test-utils';
 
 installRuntimeWindowConfig({
-  MAX_UPLOAD_MB: 10,
+  MAX_UPLOAD_MB: 50,
   PROCESSING_TIMEOUT_MS: 5000,
   APP_ENV: 'test',
 });

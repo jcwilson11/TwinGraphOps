@@ -30,12 +30,12 @@ test('validateSelectedFile rejects unsupported file types', () => {
 
 test('validateSelectedFile rejects oversized files', () => {
   const file = new File([new Uint8Array(12)], 'system.md', { type: 'text/markdown' });
-  Object.defineProperty(file, 'size', { configurable: true, value: 12 * 1024 * 1024 });
+  Object.defineProperty(file, 'size', { configurable: true, value: 52 * 1024 * 1024 });
 
-  const result = validateSelectedFile(file, 10 * 1024 * 1024);
+  const result = validateSelectedFile(file, 50 * 1024 * 1024);
 
   assert.equal(result.phase, 'error');
-  assert.match(result.error || '', /10 MB upload limit/);
+  assert.match(result.error || '', /50 MB upload limit/);
   assert.equal(result.statusMessage, 'Selected file is too large.');
 });
 

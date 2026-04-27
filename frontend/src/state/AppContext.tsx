@@ -550,15 +550,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }, 900);
 
         const ingestion = await uploadKnowledgeDocument(selectedFile, true, appConfig.processingTimeoutMs, ingestionId);
-        const latestProcessingStatus = await getDocumentProcessingStatus(ingestionId).catch(() => null);
-
         setDocumentUpload((current) => ({
           ...current,
           ingestion,
           phase: 'processing',
-          statusMessage: latestProcessingStatus?.latest_event || 'Loading the generated document workspace...',
-          processingStatus: latestProcessingStatus || current.processingStatus,
+          statusMessage: 'Document accepted. Waiting for processing progress...',
         }));
+
+        let latestProcessingStatus = await getDocumentProcessingStatus(ingestionId).catch(() => null);
+        while (keepPolling && latestProcessingStatus?.state !== 'succeeded' && latestProcessingStatus?.state !== 'failed') {
+          await new Promise((resolve) => window.setTimeout(resolve, 800));
+          latestProcessingStatus = await getDocumentProcessingStatus(ingestionId).catch(() => latestProcessingStatus);
+        }
+
+        if (latestProcessingStatus?.state === 'failed') {
+          throw new ApiClientError(
+            latestProcessingStatus.latest_event || 'Document processing failed before the graph was ready.',
+            {
+              code: 'document_processing_failed',
+              retryable: true,
+            }
+          );
+        }
 
         const graphPayload = await getDocumentGraph();
         const adaptedGraph = adaptDocumentGraph(graphPayload);

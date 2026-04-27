@@ -7,7 +7,7 @@ export function installRuntimeWindowConfig(overrides: Partial<Record<string, str
     writable: true,
     value: {
       __TWIN_CONFIG__: {
-        MAX_UPLOAD_MB: 10,
+        MAX_UPLOAD_MB: 50,
         PROCESSING_TIMEOUT_MS: 90000,
         APP_ENV: 'test',
         ...overrides,

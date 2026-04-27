@@ -9,13 +9,13 @@ from collections import deque
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock, Thread
 from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from neo4j import GraphDatabase
-from threading import Lock
 
 from document_pipeline import (
     DOCUMENT_PART_COUNT,
@@ -415,7 +415,7 @@ def get_gemini_client() -> GeminiGraphExtractor:
         model=os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite-preview"),
         max_retries=int(os.getenv("GEMINI_MAX_RETRIES", "2")),
         backoff_seconds=float(os.getenv("GEMINI_RETRY_BACKOFF_SECONDS", "1.0")),
-        timeout_ms=int(os.getenv("GEMINI_TIMEOUT_MS", "30000")),
+        timeout_ms=int(os.getenv("GEMINI_TIMEOUT_MS", "300000")),
     )
 
 
@@ -427,7 +427,7 @@ def get_gemini_document_client() -> GeminiDocumentGraphExtractor:
         backoff_seconds=float(
             os.getenv("GEMINI_DOCUMENT_RETRY_BACKOFF_SECONDS", os.getenv("GEMINI_RETRY_BACKOFF_SECONDS", "3.0"))
         ),
-        timeout_ms=int(os.getenv("GEMINI_DOCUMENT_TIMEOUT_MS", os.getenv("GEMINI_TIMEOUT_MS", "60000"))),
+        timeout_ms=int(os.getenv("GEMINI_DOCUMENT_TIMEOUT_MS", os.getenv("GEMINI_TIMEOUT_MS", "300000"))),
     )
 
 
@@ -1209,6 +1209,43 @@ def _serialize_document_graph(graph: DocumentMergedGraph) -> dict[str, Any]:
     }
 
 
+def _run_document_ingestion_background_job(
+    filename: str,
+    suffix: str,
+    raw: bytes,
+    replace_existing: bool,
+    ingestion_id: str,
+) -> None:
+    try:
+        run_document_ingestion_pipeline(
+            filename=filename,
+            suffix=suffix,
+            raw=raw,
+            replace_existing=replace_existing,
+            ingestion_id=ingestion_id,
+        )
+    except ApiError as exc:
+        log_event(
+            "error",
+            "document_background_job_failed",
+            ingestion_id=ingestion_id,
+            filename=filename,
+            error_code=exc.code,
+            error_message=exc.message,
+            details=exc.details,
+        )
+    except Exception as exc:
+        log_event(
+            "error",
+            "document_background_job_failed",
+            ingestion_id=ingestion_id,
+            filename=filename,
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+            traceback=traceback.format_exc(),
+        )
+
+
 def run_document_ingestion_pipeline(
     filename: str,
     suffix: str,
@@ -1735,12 +1772,35 @@ def document_ingest(
         replace_existing=replace_existing,
         payload_bytes=len(raw),
     )
+    effective_ingestion_id = normalize_ingestion_id(normalized_ingestion_id)
+    INGESTION_EVENTS.register(effective_ingestion_id, filename)
+
+    thread = Thread(
+        target=_run_document_ingestion_background_job,
+        kwargs={
+            "filename": filename,
+            "suffix": suffix,
+            "raw": raw,
+            "replace_existing": replace_existing,
+            "ingestion_id": effective_ingestion_id,
+        },
+        daemon=True,
+    )
+    thread.start()
+
     return success_response(
-        run_document_ingestion_pipeline(
-            filename=filename,
-            suffix=suffix,
-            raw=raw,
-            replace_existing=replace_existing,
-            ingestion_id=normalized_ingestion_id,
-        )
+        {
+            "ingestion_id": effective_ingestion_id,
+            "filename": filename,
+            "source": "document",
+            "chunks_total": None,
+            "markdown_parts_created": None,
+            "page_markers_detected": None,
+            "total_pages": None,
+            "artifacts_path": str(get_artifact_dir(effective_ingestion_id)).replace("\\", "/"),
+            "replaced_existing": replace_existing,
+            "nodes_created": None,
+            "edges_created": None,
+            "evidence_items": None,
+        }
     )
