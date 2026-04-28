@@ -90,6 +90,34 @@ export interface ApiGraphData {
   edges: ApiGraphEdge[];
 }
 
+export interface ApiMergedGraphNode {
+  id: string;
+  name: string;
+  type: string;
+  description: string;
+  risk_score: number;
+  risk_level: string;
+  degree: number;
+  betweenness: number;
+  closeness: number;
+  blast_radius: number;
+  dependency_span: number;
+  risk_explanation: string;
+  source: string;
+}
+
+export interface ApiMergedGraphEdge {
+  source: string;
+  target: string;
+  relation: string;
+  rationale: string;
+}
+
+export interface ApiMergedGraphData {
+  nodes: ApiMergedGraphNode[];
+  edges: ApiMergedGraphEdge[];
+}
+
 export interface RiskResponse {
   component_id: string;
   score: number;

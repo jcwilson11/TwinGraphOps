@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
-import { BarChart3, FileText, List, Loader2, Network, RefreshCcw, Upload } from 'lucide-react';
+import { lazy, Suspense, useState } from 'react';
+import { BarChart3, FileJson, FileText, List, Loader2, Network } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import DocumentNodesEdgesView from '../components/DocumentNodesEdgesView';
 import DocumentOverview from '../components/DocumentOverview';
@@ -20,74 +20,65 @@ const navItems: Array<{ id: DocumentViewType; label: string; icon: typeof Networ
   { id: 'overview', label: 'Document Overview', icon: BarChart3 },
 ];
 
-export default function DocumentWorkspace() {
+export default function UploadedDocumentWorkspace() {
   const navigate = useNavigate();
-  const { documentGraph, loadDocumentGraph } = useAppContext();
+  const { uploadedGraph } = useAppContext();
   const [currentView, setCurrentView] = useState<DocumentViewType>('graph');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const graphData = uploadedGraph.documentData;
 
-  useEffect(() => {
-    if (documentGraph.status === 'idle' && !documentGraph.data) {
-      loadDocumentGraph().catch(() => undefined);
-    }
-  }, [documentGraph.data, documentGraph.status, loadDocumentGraph]);
-
-  useEffect(() => {
-    if (!documentGraph.data || !selectedNodeId) {
-      return;
-    }
-    if (!documentGraph.data.nodeIndex[selectedNodeId]) {
-      setSelectedNodeId(null);
-    }
-  }, [documentGraph.data, selectedNodeId]);
-
-  if (documentGraph.status === 'loading' && !documentGraph.data) {
+  if (uploadedGraph.status === 'loading' && !graphData) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#0F172A]">
         <div className="flex items-center gap-3 text-slate-200">
           <Loader2 className="h-5 w-5 animate-spin" />
-          <span>Loading document graph...</span>
+          <span>Loading uploaded document graph...</span>
         </div>
       </div>
     );
   }
 
-  if (documentGraph.status === 'error' && !documentGraph.data) {
+  if (uploadedGraph.status === 'error' && !graphData) {
     return (
       <div className="min-h-screen bg-[#0F172A] px-6 py-16">
         <div className="mx-auto max-w-4xl">
           <EmptyState
-            title="Document Graph Loading Failed"
-            message={documentGraph.error || 'The frontend could not load the active document graph from the backend.'}
-            action={
-              <div className="flex flex-wrap justify-center gap-3">
-                <Button onClick={() => loadDocumentGraph().catch(() => undefined)}>Retry Graph Load</Button>
-                <Button variant="secondary" onClick={() => navigate('/documents')}>
-                  Return to Upload
-                </Button>
-              </div>
-            }
+            title="Uploaded Document Graph Loading Failed"
+            message={uploadedGraph.error || 'The frontend could not load the selected document graph JSON.'}
+            action={<Button onClick={() => navigate('/graphs')}>Return to Graph Upload</Button>}
           />
         </div>
       </div>
     );
   }
 
-  if (!documentGraph.data || documentGraph.data.nodes.length === 0) {
+  if (!graphData) {
     return (
       <div className="min-h-screen bg-[#0F172A] px-6 py-16">
         <div className="mx-auto max-w-4xl">
           <EmptyState
-            title="The Document Graph Is Empty"
-            message="Upload a PDF, markdown, or text document to build a document knowledge graph."
-            action={<Button onClick={() => navigate('/documents')}>Upload Document</Button>}
+            title="No Uploaded Document Graph Loaded"
+            message="Upload a document graph artifact JSON to inspect a local document workspace."
+            action={<Button onClick={() => navigate('/graphs')}>Upload Graph JSON</Button>}
           />
         </div>
       </div>
     );
   }
 
-  const graphData = documentGraph.data;
+  if (graphData.nodes.length === 0) {
+    return (
+      <div className="min-h-screen bg-[#0F172A] px-6 py-16">
+        <div className="mx-auto max-w-4xl">
+          <EmptyState
+            title="The Uploaded Document Graph Is Empty"
+            message="The selected document graph artifact loaded successfully, but it contains no nodes."
+            action={<Button onClick={() => navigate('/graphs')}>Upload Another Graph</Button>}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#0F172A]">
@@ -99,7 +90,7 @@ export default function DocumentWorkspace() {
             </div>
             <div>
               <h1 className="text-xl font-bold text-white">TwinGraphOps</h1>
-              <p className="text-sm text-slate-400">Document knowledge graph workspace</p>
+              <p className="text-sm text-slate-400">Uploaded document graph workspace</p>
             </div>
           </div>
 
@@ -116,7 +107,7 @@ export default function DocumentWorkspace() {
 
           <div className="mt-4">
             <Badge className="border-blue-500/30 bg-blue-500/10 text-blue-100">
-              Active Graph: {formatLabel(graphData.source)}
+              Active Graph: {uploadedGraph.filename || formatLabel(graphData.source)}
             </Badge>
           </div>
 
@@ -127,13 +118,13 @@ export default function DocumentWorkspace() {
             >
               Risk
             </button>
-            <button className="rounded-2xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white">Documents</button>
             <button
-              onClick={() => navigate('/graphs')}
+              onClick={() => navigate('/documents')}
               className="rounded-2xl border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500 hover:text-white"
             >
-              Graphs
+              Documents
             </button>
+            <button className="rounded-2xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white">Graphs</button>
           </div>
         </div>
 
@@ -158,18 +149,11 @@ export default function DocumentWorkspace() {
 
         <div className="border-t border-slate-800 p-4">
           <button
-            onClick={() => navigate('/documents')}
+            onClick={() => navigate('/graphs')}
             className="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-medium text-slate-400 transition hover:bg-slate-900 hover:text-white"
           >
-            <Upload className="h-5 w-5" />
-            <span>Upload New Document</span>
-          </button>
-          <button
-            onClick={() => navigate('/graphs')}
-            className="mt-2 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-medium text-slate-400 transition hover:bg-slate-900 hover:text-white"
-          >
-            <Network className="h-5 w-5" />
-            <span>Graph Workspace</span>
+            <FileJson className="h-5 w-5" />
+            <span>Upload New Graph</span>
           </button>
         </div>
       </aside>
@@ -178,18 +162,15 @@ export default function DocumentWorkspace() {
         <header className="border-b border-slate-800 bg-slate-950/60 px-6 py-4">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-semibold text-white">Document Graph Workspace</h1>
+              <h1 className="text-2xl font-semibold text-white">Uploaded Document Graph Workspace</h1>
               <p className="mt-1 text-sm text-slate-400">
                 {graphData.nodes.length} nodes, {graphData.links.length} relationships, {graphData.kindTypes.length} node kinds
               </p>
             </div>
 
             <div className="flex items-center gap-3">
-              {documentGraph.error ? <StatusBanner tone="error" message={documentGraph.error} /> : null}
-              <Button variant="secondary" onClick={() => loadDocumentGraph({ keepStatus: true }).catch(() => undefined)}>
-                <RefreshCcw className="h-4 w-4" />
-                Refresh
-              </Button>
+              {uploadedGraph.error ? <StatusBanner tone="error" message={uploadedGraph.error} /> : null}
+              <Badge className="border-slate-700 bg-slate-900/80 text-slate-200">Auto-detected document artifact</Badge>
             </div>
           </div>
         </header>

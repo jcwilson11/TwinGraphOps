@@ -7,6 +7,9 @@ import type {
   ApiGraphData,
   ApiGraphEdge,
   ApiGraphNode,
+  ApiMergedGraphData,
+  ApiMergedGraphEdge,
+  ApiMergedGraphNode,
   ImpactResponse,
   RiskResponse,
 } from '../types/api';
@@ -97,6 +100,65 @@ export function adaptGraph(apiGraph: ApiGraphData): GraphData {
 
   return {
     source,
+    nodes,
+    links,
+    nodeIndex,
+    relationTypes,
+  };
+}
+
+function normalizeMergedNode(node: ApiMergedGraphNode, dependencyMap: Map<string, string[]>, dependentMap: Map<string, string[]>): GraphNode {
+  return {
+    id: ensureString(node.id, 'merged.node.id'),
+    name: ensureString(node.name, 'merged.node.name'),
+    type: ensureString(node.type, 'merged.node.type'),
+    description: ensureString(node.description, 'merged.node.description'),
+    riskScore: ensureNumber(node.risk_score, 'merged.node.risk_score'),
+    riskLevel: ensureString(node.risk_level, 'merged.node.risk_level'),
+    degree: ensureNumber(node.degree, 'merged.node.degree'),
+    betweenness: ensureNumber(node.betweenness, 'merged.node.betweenness'),
+    closeness: ensureNumber(node.closeness, 'merged.node.closeness'),
+    blastRadius: ensureNumber(node.blast_radius, 'merged.node.blast_radius'),
+    dependencySpan: ensureNumber(node.dependency_span, 'merged.node.dependency_span'),
+    riskExplanation: ensureString(node.risk_explanation, 'merged.node.risk_explanation'),
+    source: ensureString(node.source, 'merged.node.source'),
+    dependencies: dependencyMap.get(node.id) ?? [],
+    dependents: dependentMap.get(node.id) ?? [],
+    val: 18 + Math.round((node.risk_score / 100) * 22),
+  };
+}
+
+function normalizeMergedEdge(edge: ApiMergedGraphEdge, index: number): GraphEdge {
+  return {
+    id: `${ensureString(edge.source, 'merged.edge.source')}-${ensureString(edge.target, 'merged.edge.target')}-${index}`,
+    source: edge.source,
+    target: edge.target,
+    relation: ensureString(edge.relation, 'merged.edge.relation'),
+    rationale: ensureString(edge.rationale, 'merged.edge.rationale'),
+  };
+}
+
+export function adaptMergedGraph(apiGraph: ApiMergedGraphData, sourceLabel = 'uploaded'): GraphData {
+  const apiNodes = ensureArray<ApiMergedGraphNode>(apiGraph.nodes, 'merged.graph.nodes');
+  const apiEdges = ensureArray<ApiMergedGraphEdge>(apiGraph.edges, 'merged.graph.edges');
+
+  const dependencyMap = new Map<string, string[]>();
+  const dependentMap = new Map<string, string[]>();
+
+  for (const edge of apiEdges) {
+    const sourceId = ensureString(edge.source, 'merged.edge.source');
+    const targetId = ensureString(edge.target, 'merged.edge.target');
+    dependencyMap.set(sourceId, [...(dependencyMap.get(sourceId) ?? []), targetId]);
+    dependentMap.set(targetId, [...(dependentMap.get(targetId) ?? []), sourceId]);
+  }
+
+  const nodes = apiNodes.map((node) => normalizeMergedNode(node, dependencyMap, dependentMap));
+  const links = apiEdges.map((edge, index) => normalizeMergedEdge(edge, index));
+  const nodeIndex = Object.fromEntries(nodes.map((node) => [node.id, node]));
+  const relationTypes = [...new Set(links.map((edge) => edge.relation))].sort();
+
+  return {
+    source: nodes[0]?.source || sourceLabel,
     nodes,
     links,
     nodeIndex,

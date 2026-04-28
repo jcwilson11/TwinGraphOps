@@ -53,7 +53,7 @@ export default function Sidebar({ currentView, onViewChange, graphSource, nodeCo
           </Badge>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-2">
+        <div className="mt-4 grid grid-cols-3 gap-2">
           <button className="rounded-2xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white">
             Risk
           </button>
@@ -62,6 +62,12 @@ export default function Sidebar({ currentView, onViewChange, graphSource, nodeCo
             className="rounded-2xl border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500 hover:text-white"
           >
             Documents
+          </button>
+          <button
+            onClick={() => navigate('/graphs')}
+            className="rounded-2xl border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500 hover:text-white"
+          >
+            Graphs
           </button>
         </div>
       </div>
@@ -102,6 +108,13 @@ export default function Sidebar({ currentView, onViewChange, graphSource, nodeCo
         >
           <FileText className="h-5 w-5" />
           <span>Document Workspace</span>
+        </button>
+        <button
+          onClick={() => navigate('/graphs')}
+          className="mt-2 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-medium text-slate-400 transition hover:bg-slate-900 hover:text-white"
+        >
+          <Network className="h-5 w-5" />
+          <span>Graph Workspace</span>
         </button>
       </div>
     </aside>

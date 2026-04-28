@@ -5,6 +5,8 @@ import MainApp from './pages/MainApp';
 import DocumentProcessingPage from './pages/DocumentProcessingPage';
 import DocumentUploadPage from './pages/DocumentUploadPage';
 import DocumentWorkspace from './pages/DocumentWorkspace';
+import UploadedGraphUploadPage from './pages/UploadedGraphUploadPage';
+import UploadedGraphWorkspace from './pages/UploadedGraphWorkspace';
 
 export const router = createBrowserRouter([
   { path: '/', element: <LandingPage /> },
@@ -14,4 +16,6 @@ export const router = createBrowserRouter([
   { path: '/documents', element: <DocumentUploadPage /> },
   { path: '/documents/processing', element: <DocumentProcessingPage /> },
   { path: '/documents/workspace', element: <DocumentWorkspace /> },
+  { path: '/graphs', element: <UploadedGraphUploadPage /> },
+  { path: '/graphs/workspace', element: <UploadedGraphWorkspace /> },
 ]);

@@ -48,6 +48,12 @@ export default function LandingPage() {
             >
               Document Workspace
             </button>
+            <button
+              onClick={() => navigate('/graphs')}
+              className="rounded-xl px-4 py-2 text-sm font-semibold text-slate-300 transition hover:text-white"
+            >
+              Graph Workspace
+            </button>
           </div>
           <Button variant="secondary" onClick={() => navigate('/risk')} disabled={!graph.data}>
             Open Risk Graph

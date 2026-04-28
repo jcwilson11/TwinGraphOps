@@ -8,9 +8,12 @@ const stateModule = await import('../src/state/AppContext');
 const {
   createSelectedDocumentFileUploadState,
   createSelectedFileUploadState,
+  createSelectedUploadedGraphFileState,
   getFileExtension,
+  parseUploadedGraphJson,
   validateSelectedDocumentFile,
   validateSelectedFile,
+  validateSelectedUploadedGraphFile,
 } = stateModule;
 
 test('getFileExtension normalizes file extensions', () => {
@@ -53,4 +56,120 @@ test('validateSelectedDocumentFile accepts pdf markdown and text files', () => {
 
     assert.deepEqual(result, createSelectedDocumentFileUploadState(file));
   }
+});
+
+test('validateSelectedUploadedGraphFile rejects non-json files', () => {
+  const file = new File(['bad'], 'graph.md', { type: 'text/markdown' });
+  const result = validateSelectedUploadedGraphFile(file, 10 * 1024 * 1024);
+
+  assert.equal(result.phase, 'error');
+  assert.equal(result.error, 'Only .json graph artifact files are supported.');
+});
+
+test('validateSelectedUploadedGraphFile accepts json files', () => {
+  const file = new File(['{}'], 'merged_graph.json', { type: 'application/json' });
+  const result = validateSelectedUploadedGraphFile(file, 10 * 1024 * 1024);
+
+  assert.deepEqual(result, createSelectedUploadedGraphFileState(file));
+});
+
+test('parseUploadedGraphJson rejects malformed JSON text', () => {
+  assert.throws(() => parseUploadedGraphJson('{bad json}'), /not valid JSON/);
+});
+
+test('parseUploadedGraphJson rejects valid JSON with the wrong schema', () => {
+  assert.throws(
+    () => parseUploadedGraphJson(JSON.stringify({ nodes: [{ id: 'n1' }], edges: [] })),
+    /supported operational or document graph artifact schema/
+  );
+});
+
+test('parseUploadedGraphJson accepts finalized merged graph payloads', () => {
+  const payload = parseUploadedGraphJson(
+    JSON.stringify({
+      nodes: [
+        {
+          id: 'api',
+          name: 'API',
+          type: 'software',
+          description: 'Core API',
+          risk_score: 82,
+          risk_level: 'high',
+          degree: 2,
+          betweenness: 0.5,
+          closeness: 0.6,
+          blast_radius: 3,
+          dependency_span: 2,
+          risk_explanation: 'Critical dependency hub.',
+          source: 'user',
+        },
+      ],
+      edges: [],
+    })
+  );
+
+  assert.equal(payload.kind, 'operational');
+  assert.equal((payload.rawData as any).nodes[0].id, 'api');
+  assert.deepEqual((payload.rawData as any).edges, []);
+});
+
+test('parseUploadedGraphJson accepts merged_document_graph payloads', () => {
+  const payload = parseUploadedGraphJson(
+    JSON.stringify({
+      source: 'document',
+      nodes: [
+        {
+          id: 'D1',
+          label: 'Retention Policy',
+          kind: 'requirement',
+          canonical_name: 'Retention Policy',
+          aliases: ['records policy'],
+          summary: 'Defines retention.',
+          evidence: [],
+          sources: [],
+          degree: 1,
+          source: 'document',
+        },
+      ],
+      edges: [
+        {
+          id: 'DE1',
+          source: 'D1',
+          target: 'D1',
+          type: 'references',
+          summary: 'Self reference in fixture only.',
+          evidence: [],
+          source_chunk: null,
+        },
+      ],
+    })
+  );
+
+  assert.equal(payload.kind, 'document');
+  assert.equal((payload.rawData as any).source, 'document');
+});
+
+test('parseUploadedGraphJson accepts neo4j_document_payload-style payloads', () => {
+  const payload = parseUploadedGraphJson(
+    JSON.stringify({
+      source: 'document',
+      nodes: [
+        {
+          id: 'D1',
+          label: 'Retention Policy',
+          kind: 'requirement',
+          canonical_name: 'Retention Policy',
+          aliases: [],
+          summary: 'Defines retention.',
+          evidence: [],
+          sources: [],
+          degree: 1,
+          source: 'document',
+        },
+      ],
+      edges: [],
+    })
+  );
+
+  assert.equal(payload.kind, 'document');
 });

@@ -4,9 +4,10 @@ import { buildGraphSummary, formatLabel, getRiskColor, getTypeColor } from '../l
 
 interface RiskAnalysisProps {
   graphData: GraphData;
+  sourceLabel?: string;
 }
 
-export default function RiskAnalysis({ graphData }: RiskAnalysisProps) {
+export default function RiskAnalysis({ graphData, sourceLabel = 'active graph' }: RiskAnalysisProps) {
   const summary = buildGraphSummary(graphData);
   const maxRiskBucket = Math.max(...summary.riskDistribution.map((item) => item.count), 1);
   const maxTypeCount = Math.max(...summary.typeDistribution.map((item) => item.count), 1);
@@ -21,7 +22,7 @@ export default function RiskAnalysis({ graphData }: RiskAnalysisProps) {
           </div>
           <h1 className="mt-2 text-3xl font-bold text-white">Operational Risk Dashboard</h1>
           <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-300">
-            Dashboard values are derived from the active backend graph because the current API contract does not yet expose dedicated risk-list or summary endpoints.
+            Dashboard values are derived directly from the {sourceLabel} because the current frontend does not depend on a separate ranked-risk endpoint here.
           </p>
         </div>
 

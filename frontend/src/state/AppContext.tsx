@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { adaptDocumentGraph, adaptGraph } from '../lib/adapters';
+import { adaptDocumentGraph, adaptGraph, adaptMergedGraph } from '../lib/adapters';
 import {
   ApiClientError,
   getDocumentGraph,
@@ -11,13 +11,24 @@ import {
   uploadKnowledgeDocument,
 } from '../lib/api';
 import { appConfig } from '../lib/config';
-import type { DocumentGraphState, DocumentUploadState, GraphState, UploadState } from '../types/app';
+import type {
+  DocumentGraphState,
+  DocumentUploadState,
+  GraphState,
+  UploadState,
+  UploadedArtifactKind,
+  UploadedGraphState,
+  UploadedGraphUploadState,
+} from '../types/app';
+import type { ApiDocumentGraphData, ApiMergedGraphData } from '../types/api';
 
 export interface AppContextValue {
   upload: UploadState;
   graph: GraphState;
   documentUpload: DocumentUploadState;
   documentGraph: DocumentGraphState;
+  uploadedGraphUpload: UploadedGraphUploadState;
+  uploadedGraph: UploadedGraphState;
   setDragActive: (active: boolean) => void;
   selectFile: (file: File | null) => boolean;
   clearSelectedFile: () => void;
@@ -28,6 +39,10 @@ export interface AppContextValue {
   clearSelectedDocumentFile: () => void;
   beginDocumentProcessing: () => Promise<void>;
   loadDocumentGraph: (options?: { keepStatus?: boolean }) => Promise<void>;
+  setUploadedGraphDragActive: (active: boolean) => void;
+  selectUploadedGraphFile: (file: File | null) => boolean;
+  clearSelectedUploadedGraphFile: () => void;
+  loadUploadedGraphFromSelectedFile: () => Promise<void>;
   resetUploadState: () => void;
 }
 
@@ -53,6 +68,24 @@ const initialGraphState: GraphState = {
   lastLoadedAt: null,
 };
 
+export const initialUploadedGraphUploadState: UploadedGraphUploadState = {
+  phase: 'idle',
+  selectedFile: null,
+  error: null,
+  statusMessage: 'Upload a merged_graph.json file to inspect a finalized knowledge graph.',
+};
+
+const initialUploadedGraphState: UploadedGraphState = {
+  status: 'idle',
+  kind: null,
+  operationalData: null,
+  documentData: null,
+  error: null,
+  lastLoadedAt: null,
+  filename: null,
+  rawData: null,
+};
+
 export const initialDocumentUploadState: DocumentUploadState = {
   phase: 'idle',
   selectedFile: null,
@@ -75,6 +108,7 @@ const initialDocumentGraphState: DocumentGraphState = {
 
 export const supportedExtensions = ['.md', '.txt'];
 export const supportedDocumentExtensions = ['.pdf', '.md', '.txt'];
+export const supportedUploadedGraphExtensions = ['.json'];
 
 export function getFileExtension(filename: string) {
   const segments = filename.toLowerCase().split('.');
@@ -129,6 +163,24 @@ export function createDocumentUploadErrorState(error: string, statusMessage: str
   };
 }
 
+export function createSelectedUploadedGraphFileState(file: File): UploadedGraphUploadState {
+  return {
+    phase: 'file-selected',
+    selectedFile: file,
+    error: null,
+    statusMessage: `Ready to inspect ${file.name}.`,
+  };
+}
+
+export function createUploadedGraphErrorState(error: string, statusMessage: string): UploadedGraphUploadState {
+  return {
+    ...initialUploadedGraphUploadState,
+    phase: 'error',
+    error,
+    statusMessage,
+  };
+}
+
 export function validateSelectedFile(file: File | null, maxUploadBytes: number): UploadState {
   if (!file) {
     return initialUploadState;
@@ -169,6 +221,135 @@ export function validateSelectedDocumentFile(file: File | null, maxUploadBytes: 
   return createSelectedDocumentFileUploadState(file);
 }
 
+export function validateSelectedUploadedGraphFile(file: File | null, maxUploadBytes: number): UploadedGraphUploadState {
+  if (!file) {
+    return initialUploadedGraphUploadState;
+  }
+
+  const extension = getFileExtension(file.name);
+  if (!supportedUploadedGraphExtensions.includes(extension)) {
+    return createUploadedGraphErrorState('Only .json graph artifact files are supported.', 'Unsupported file type.');
+  }
+
+  if (file.size > maxUploadBytes) {
+    return createUploadedGraphErrorState(
+      `File exceeds the ${Math.round(maxUploadBytes / 1024 / 1024)} MB upload limit.`,
+      'Selected file is too large.'
+    );
+  }
+
+  return createSelectedUploadedGraphFileState(file);
+}
+
+function ensureOperationalUploadedGraphShape(payload: unknown): ApiMergedGraphData {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('The uploaded file must be a JSON object with nodes and edges.');
+  }
+
+  const candidate = payload as Record<string, unknown>;
+  if (!Array.isArray(candidate.nodes) || !Array.isArray(candidate.edges)) {
+    throw new Error('The uploaded file must include top-level nodes and edges arrays.');
+  }
+
+  return {
+    nodes: candidate.nodes as ApiMergedGraphData['nodes'],
+    edges: candidate.edges as ApiMergedGraphData['edges'],
+  };
+}
+
+function ensureDocumentUploadedGraphShape(payload: unknown): ApiDocumentGraphData {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('The uploaded file must be a document graph JSON object with nodes and edges.');
+  }
+
+  const candidate = payload as Record<string, unknown>;
+  if (!Array.isArray(candidate.nodes) || !Array.isArray(candidate.edges) || typeof candidate.source !== 'string') {
+    throw new Error('The uploaded document artifact must include source, nodes, and edges.');
+  }
+
+  return {
+    source: candidate.source as ApiDocumentGraphData['source'],
+    nodes: candidate.nodes as ApiDocumentGraphData['nodes'],
+    edges: candidate.edges as ApiDocumentGraphData['edges'],
+  };
+}
+
+function isOperationalArtifactPayload(payload: Record<string, unknown>) {
+  const firstNode = Array.isArray(payload.nodes) ? payload.nodes[0] : null;
+  const firstEdge = Array.isArray(payload.edges) ? payload.edges[0] : null;
+  if (Array.isArray(payload.nodes) && payload.nodes.length === 0 && Array.isArray(payload.edges) && payload.edges.length === 0) {
+    return typeof payload.source !== 'string';
+  }
+  return (
+    !!firstNode &&
+    typeof firstNode === 'object' &&
+    firstNode !== null &&
+    'name' in firstNode &&
+    'type' in firstNode &&
+    'risk_score' in firstNode &&
+    (!!firstEdge
+      ? typeof firstEdge === 'object' && firstEdge !== null && 'relation' in firstEdge && 'rationale' in firstEdge
+      : true)
+  );
+}
+
+function isDocumentArtifactPayload(payload: Record<string, unknown>) {
+  const firstNode = Array.isArray(payload.nodes) ? payload.nodes[0] : null;
+  const firstEdge = Array.isArray(payload.edges) ? payload.edges[0] : null;
+  if (Array.isArray(payload.nodes) && payload.nodes.length === 0 && Array.isArray(payload.edges) && payload.edges.length === 0) {
+    return typeof payload.source === 'string';
+  }
+  return (
+    typeof payload.source === 'string' &&
+    !!firstNode &&
+    typeof firstNode === 'object' &&
+    firstNode !== null &&
+    'label' in firstNode &&
+    'kind' in firstNode &&
+    'canonical_name' in firstNode &&
+    (!!firstEdge
+      ? typeof firstEdge === 'object' && firstEdge !== null && 'type' in firstEdge && 'summary' in firstEdge
+      : true)
+  );
+}
+
+export function parseUploadedGraphJson(fileContents: string): {
+  kind: UploadedArtifactKind;
+  rawData: ApiMergedGraphData | ApiDocumentGraphData;
+} {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fileContents);
+  } catch {
+    throw new Error('The selected file is not valid JSON.');
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('The uploaded file must be a JSON object with graph nodes and edges.');
+  }
+
+  const candidate = parsed as Record<string, unknown>;
+  if (!Array.isArray(candidate.nodes) || !Array.isArray(candidate.edges)) {
+    throw new Error('The uploaded file must include top-level nodes and edges arrays.');
+  }
+
+  if (isOperationalArtifactPayload(candidate)) {
+    return {
+      kind: 'operational',
+      rawData: ensureOperationalUploadedGraphShape(candidate),
+    };
+  }
+
+  if (isDocumentArtifactPayload(candidate)) {
+    return {
+      kind: 'document',
+      rawData: ensureDocumentUploadedGraphShape(candidate),
+    };
+  }
+
+  throw new Error('The uploaded JSON does not match a supported operational or document graph artifact schema.');
+}
+
 function toFriendlyMessage(error: unknown) {
   if (error instanceof ApiClientError) {
     return error.message;
@@ -186,6 +367,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [graph, setGraph] = useState<GraphState>(initialGraphState);
   const [documentUpload, setDocumentUpload] = useState<DocumentUploadState>(initialDocumentUploadState);
   const [documentGraph, setDocumentGraph] = useState<DocumentGraphState>(initialDocumentGraphState);
+  const [uploadedGraphUpload, setUploadedGraphUpload] = useState<UploadedGraphUploadState>(initialUploadedGraphUploadState);
+  const [uploadedGraph, setUploadedGraph] = useState<UploadedGraphState>(initialUploadedGraphState);
   const processingPromiseRef = useRef<Promise<void> | null>(null);
   const documentProcessingPromiseRef = useRef<Promise<void> | null>(null);
 
@@ -235,6 +418,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const clearSelectedDocumentFile = useCallback(() => {
     setDocumentUpload(initialDocumentUploadState);
+  }, []);
+
+  const setUploadedGraphDragActive = useCallback((active: boolean) => {
+    setUploadedGraphUpload((current) => {
+      if (active) {
+        return { ...current, phase: 'drag-hover', statusMessage: 'Drop merged_graph.json to open it locally.' };
+      }
+
+      if (current.selectedFile) {
+        return { ...current, phase: 'file-selected', statusMessage: `Ready to inspect ${current.selectedFile.name}.` };
+      }
+
+      return { ...current, phase: 'idle', statusMessage: initialUploadedGraphUploadState.statusMessage };
+    });
+  }, []);
+
+  const selectUploadedGraphFile = useCallback((file: File | null) => {
+    const nextState = validateSelectedUploadedGraphFile(file, appConfig.maxUploadBytes);
+    setUploadedGraphUpload(nextState);
+    if (nextState.phase !== 'file-selected') {
+      setUploadedGraph(initialUploadedGraphState);
+    }
+    return nextState.phase === 'file-selected';
+  }, []);
+
+  const clearSelectedUploadedGraphFile = useCallback(() => {
+    setUploadedGraphUpload(initialUploadedGraphUploadState);
+    setUploadedGraph(initialUploadedGraphState);
   }, []);
 
   const loadGraph = useCallback(async (options?: { keepStatus?: boolean }) => {
@@ -624,9 +835,104 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return task;
   }, [documentUpload.selectedFile]);
 
+  const loadUploadedGraphFromSelectedFile = useCallback(async () => {
+    const selectedFile = uploadedGraphUpload.selectedFile;
+    if (!selectedFile) {
+      setUploadedGraphUpload((current) => ({
+        ...current,
+        phase: 'error',
+        error: 'Choose a graph artifact JSON file before opening the graph workspace.',
+        statusMessage: 'No graph file selected.',
+      }));
+      return;
+    }
+
+    setUploadedGraph((current) => ({
+      ...current,
+      status: 'loading',
+      error: null,
+      filename: selectedFile.name,
+    }));
+    setUploadedGraphUpload((current) => ({
+      ...current,
+      phase: 'uploading',
+      error: null,
+      statusMessage: `Loading ${selectedFile.name} locally...`,
+    }));
+
+    try {
+      const fileContents = await selectedFile.text();
+      const parsedArtifact = parseUploadedGraphJson(fileContents);
+      if (parsedArtifact.kind === 'operational') {
+        const adaptedGraph = adaptMergedGraph(parsedArtifact.rawData as ApiMergedGraphData, selectedFile.name);
+        setUploadedGraph({
+          status: 'ready',
+          kind: 'operational',
+          operationalData: adaptedGraph,
+          documentData: null,
+          error: null,
+          lastLoadedAt: Date.now(),
+          filename: selectedFile.name,
+          rawData: parsedArtifact.rawData,
+        });
+        setUploadedGraphUpload((current) => ({
+          ...current,
+          phase: adaptedGraph.nodes.length === 0 ? 'empty-graph' : 'success',
+          error: null,
+          statusMessage:
+            adaptedGraph.nodes.length === 0
+              ? 'The uploaded operational graph contains no nodes.'
+              : `Loaded operational graph artifact ${selectedFile.name}.`,
+        }));
+      } else {
+        const adaptedGraph = adaptDocumentGraph(parsedArtifact.rawData as ApiDocumentGraphData);
+        setUploadedGraph({
+          status: 'ready',
+          kind: 'document',
+          operationalData: null,
+          documentData: adaptedGraph,
+          error: null,
+          lastLoadedAt: Date.now(),
+          filename: selectedFile.name,
+          rawData: parsedArtifact.rawData,
+        });
+        setUploadedGraphUpload((current) => ({
+          ...current,
+          phase: adaptedGraph.nodes.length === 0 ? 'empty-graph' : 'success',
+          error: null,
+          statusMessage:
+            adaptedGraph.nodes.length === 0
+              ? 'The uploaded document graph contains no nodes.'
+              : `Loaded document graph artifact ${selectedFile.name}.`,
+        }));
+      }
+    } catch (error) {
+      const message = toFriendlyMessage(error);
+      setUploadedGraph({
+        status: 'error',
+        kind: null,
+        operationalData: null,
+        documentData: null,
+        error: message,
+        lastLoadedAt: null,
+        filename: selectedFile.name,
+        rawData: null,
+      });
+      setUploadedGraphUpload((current) => ({
+        ...current,
+        phase: 'error',
+        error: message,
+        statusMessage: message,
+      }));
+      throw error;
+    }
+  }, [uploadedGraphUpload.selectedFile]);
+
   const resetUploadState = useCallback(() => {
     setUpload(initialUploadState);
     setDocumentUpload(initialDocumentUploadState);
+    setUploadedGraphUpload(initialUploadedGraphUploadState);
+    setUploadedGraph(initialUploadedGraphState);
   }, []);
 
   const value = useMemo<AppContextValue>(
@@ -635,6 +941,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       graph,
       documentUpload,
       documentGraph,
+      uploadedGraphUpload,
+      uploadedGraph,
       setDragActive,
       selectFile,
       clearSelectedFile,
@@ -645,6 +953,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       clearSelectedDocumentFile,
       beginDocumentProcessing,
       loadDocumentGraph,
+      setUploadedGraphDragActive,
+      selectUploadedGraphFile,
+      clearSelectedUploadedGraphFile,
+      loadUploadedGraphFromSelectedFile,
       resetUploadState,
     }),
     [
@@ -652,6 +964,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       graph,
       documentUpload,
       documentGraph,
+      uploadedGraphUpload,
+      uploadedGraph,
       setDragActive,
       selectFile,
       clearSelectedFile,
@@ -662,6 +976,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       clearSelectedDocumentFile,
       beginDocumentProcessing,
       loadDocumentGraph,
+      setUploadedGraphDragActive,
+      selectUploadedGraphFile,
+      clearSelectedUploadedGraphFile,
+      loadUploadedGraphFromSelectedFile,
       resetUploadState,
     ]
   );

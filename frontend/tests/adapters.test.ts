@@ -4,7 +4,8 @@ import { installRuntimeWindowConfig } from './test-utils';
 
 installRuntimeWindowConfig();
 
-const { adaptDocumentGraph } = await import('../src/lib/adapters');
+const { adaptDocumentGraph, adaptMergedGraph } = await import('../src/lib/adapters');
+const { createSampleMergedGraphData } = await import('./test-utils');
 
 test('adaptDocumentGraph maps evidence sources kinds and relations', () => {
   const graph = adaptDocumentGraph({
@@ -54,6 +55,25 @@ test('adaptDocumentGraph maps evidence sources kinds and relations', () => {
 test('adaptDocumentGraph handles empty document graphs', () => {
   const graph = adaptDocumentGraph({ source: 'document', nodes: [], edges: [] });
 
+  assert.equal(graph.nodes.length, 0);
+  assert.equal(graph.links.length, 0);
+  assert.deepEqual(graph.nodeIndex, {});
+});
+
+test('adaptMergedGraph converts finalized merged graph JSON into GraphData', () => {
+  const graph = adaptMergedGraph(createSampleMergedGraphData(), 'merged_graph.json');
+
+  assert.equal(graph.source, 'sample');
+  assert.equal(graph.nodes[0].riskScore, 82);
+  assert.deepEqual(graph.nodes[0].dependencies, ['db']);
+  assert.deepEqual(graph.nodes[1].dependents, ['api']);
+  assert.deepEqual(graph.relationTypes, ['depends_on']);
+});
+
+test('adaptMergedGraph handles empty merged graphs', () => {
+  const graph = adaptMergedGraph({ nodes: [], edges: [] }, 'empty.json');
+
+  assert.equal(graph.source, 'empty.json');
   assert.equal(graph.nodes.length, 0);
   assert.equal(graph.links.length, 0);
   assert.deepEqual(graph.nodeIndex, {});

@@ -3,7 +3,12 @@ import test from 'node:test';
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
-import { createMockContext, createSampleDocumentGraphData, createSampleGraphData, installRuntimeWindowConfig } from './test-utils';
+import {
+  createMockContext,
+  createSampleDocumentGraphData,
+  createSampleGraphData,
+  installRuntimeWindowConfig,
+} from './test-utils';
 
 installRuntimeWindowConfig();
 
@@ -13,6 +18,8 @@ const { default: ProcessingPage } = await import('../src/pages/ProcessingPage');
 const { default: SystemOverview } = await import('../src/components/SystemOverview');
 const { default: DocumentUploadPage } = await import('../src/pages/DocumentUploadPage');
 const { default: DocumentOverview } = await import('../src/components/DocumentOverview');
+const { default: UploadedGraphUploadPage } = await import('../src/pages/UploadedGraphUploadPage');
+const { default: UploadedGraphWorkspace } = await import('../src/pages/UploadedGraphWorkspace');
 
 function renderWithContext(
   element: ReactNode,
@@ -33,6 +40,7 @@ test('landing page renders the upload workspace content', () => {
   assert.match(html, /Upload System Documentation/);
   assert.match(html, /Supported formats: \.md and \.txt/);
   assert.match(html, /Document Workspace/);
+  assert.match(html, /Graph Workspace/);
 });
 
 test('processing page renders the active processing state', () => {
@@ -72,6 +80,64 @@ test('document upload page renders pdf markdown and text support', () => {
   assert.match(html, /Document Knowledge Graphs/);
   assert.match(html, /Supported formats: \.pdf, \.md, and \.txt/);
   assert.match(html, /Risk Workspace/);
+  assert.match(html, /Graph Workspace/);
+});
+
+test('uploaded graph upload page renders json-only copy', () => {
+  const html = renderWithContext(<UploadedGraphUploadPage />, {}, ['/graphs']);
+
+  assert.match(html, /Finalized Knowledge Graphs/);
+  assert.match(html, /operational or document graph artifact JSON/i);
+  assert.match(html, /Open Uploaded Graph/);
+});
+
+test('uploaded graph workspace renders loaded graph summary', () => {
+  const graphData = createSampleGraphData();
+  const html = renderWithContext(
+    <UploadedGraphWorkspace />,
+    {
+      uploadedGraph: {
+        ...createMockContext().uploadedGraph,
+        status: 'ready',
+        kind: 'operational',
+        operationalData: graphData,
+        filename: 'merged_graph.json',
+      },
+    },
+    ['/graphs/workspace']
+  );
+
+  assert.match(html, /Uploaded Graph Workspace/);
+  assert.match(html, /Auto-detected operational artifact/);
+  assert.match(html, /merged_graph\.json/i);
+});
+
+test('uploaded graph workspace renders empty state when no graph is loaded', () => {
+  const html = renderWithContext(<UploadedGraphWorkspace />, {}, ['/graphs/workspace']);
+
+  assert.match(html, /No Uploaded Graph Loaded/);
+  assert.match(html, /Upload Graph JSON/);
+});
+
+test('uploaded graph workspace renders document-style viewer for document artifacts', () => {
+  const graphData = createSampleDocumentGraphData();
+  const html = renderWithContext(
+    <UploadedGraphWorkspace />,
+    {
+      uploadedGraph: {
+        ...createMockContext().uploadedGraph,
+        status: 'ready',
+        kind: 'document',
+        documentData: graphData,
+        filename: 'merged_document_graph.json',
+      },
+    },
+    ['/graphs/workspace']
+  );
+
+  assert.match(html, /Uploaded Document Graph Workspace/);
+  assert.match(html, /Auto-detected document artifact/);
+  assert.match(html, /merged_document_graph\.json/i);
 });
 
 test('document overview renders the loaded document graph summary', () => {

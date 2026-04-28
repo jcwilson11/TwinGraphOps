@@ -1,4 +1,4 @@
-import type { DocumentIngestResponse, IngestResponse, ProcessingStatus } from './api';
+import type { ApiDocumentGraphData, ApiMergedGraphData, DocumentIngestResponse, IngestResponse, ProcessingStatus } from './api';
 
 export type UploadPhase =
   | 'idle'
@@ -104,6 +104,26 @@ export interface GraphState {
   data: GraphData | null;
   error: string | null;
   lastLoadedAt: number | null;
+}
+
+export interface UploadedGraphUploadState {
+  phase: UploadPhase;
+  selectedFile: File | null;
+  error: string | null;
+  statusMessage: string;
+}
+
+export type UploadedArtifactKind = 'operational' | 'document';
+
+export interface UploadedGraphState {
+  status: LoadStatus;
+  kind: UploadedArtifactKind | null;
+  operationalData: GraphData | null;
+  documentData: DocumentGraphData | null;
+  error: string | null;
+  lastLoadedAt: number | null;
+  filename: string | null;
+  rawData: ApiMergedGraphData | ApiDocumentGraphData | null;
 }
 
 export interface DocumentEvidence {

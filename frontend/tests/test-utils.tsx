@@ -130,6 +130,51 @@ export function createSampleGraphData() {
   };
 }
 
+export function createSampleMergedGraphData() {
+  return {
+    nodes: [
+      {
+        id: 'api',
+        name: 'API Service',
+        type: 'software',
+        description: 'Core API',
+        risk_score: 82,
+        risk_level: 'high',
+        degree: 2,
+        betweenness: 0.55,
+        closeness: 0.67,
+        blast_radius: 3,
+        dependency_span: 2,
+        risk_explanation: 'Handles core requests.',
+        source: 'sample',
+      },
+      {
+        id: 'db',
+        name: 'Database',
+        type: 'data',
+        description: 'Persistence layer',
+        risk_score: 44,
+        risk_level: 'medium',
+        degree: 1,
+        betweenness: 0.22,
+        closeness: 0.44,
+        blast_radius: 1,
+        dependency_span: 1,
+        risk_explanation: 'Stores records.',
+        source: 'sample',
+      },
+    ],
+    edges: [
+      {
+        source: 'api',
+        target: 'db',
+        relation: 'depends_on',
+        rationale: 'Reads and writes records.',
+      },
+    ],
+  };
+}
+
 export function createSampleDocumentGraphData() {
   const nodes = [
     {
@@ -232,6 +277,22 @@ export function createMockContext(overrides = {}) {
       error: null,
       lastLoadedAt: null,
     },
+    uploadedGraphUpload: {
+      phase: 'idle',
+      selectedFile: null,
+      error: null,
+      statusMessage: 'Upload a merged_graph.json file to inspect a finalized knowledge graph.',
+    },
+    uploadedGraph: {
+      status: 'idle',
+      kind: null,
+      operationalData: null,
+      documentData: null,
+      error: null,
+      lastLoadedAt: null,
+      filename: null,
+      rawData: null,
+    },
     setDragActive: () => {},
     selectFile: () => true,
     clearSelectedFile: () => {},
@@ -242,6 +303,10 @@ export function createMockContext(overrides = {}) {
     clearSelectedDocumentFile: () => {},
     beginDocumentProcessing: async () => {},
     loadDocumentGraph: async () => {},
+    setUploadedGraphDragActive: () => {},
+    selectUploadedGraphFile: () => true,
+    clearSelectedUploadedGraphFile: () => {},
+    loadUploadedGraphFromSelectedFile: async () => {},
     resetUploadState: () => {},
     ...overrides,
   };
