@@ -10,6 +10,7 @@ const { createSampleMergedGraphData } = await import('./test-utils');
 test('adaptDocumentGraph maps evidence sources kinds and relations', () => {
   const graph = adaptDocumentGraph({
     source: 'document',
+    ingestion_id: 'doc-123',
     nodes: [
       {
         id: 'D1',
@@ -46,6 +47,7 @@ test('adaptDocumentGraph maps evidence sources kinds and relations', () => {
   });
 
   assert.equal(graph.source, 'document');
+  assert.equal(graph.ingestionId, 'doc-123');
   assert.equal(graph.nodes[0].canonicalName, 'Retention Policy');
   assert.equal(graph.nodes[0].evidence[0].pageStart, 1);
   assert.deepEqual(graph.kindTypes, ['requirement']);
@@ -53,7 +55,7 @@ test('adaptDocumentGraph maps evidence sources kinds and relations', () => {
 });
 
 test('adaptDocumentGraph handles empty document graphs', () => {
-  const graph = adaptDocumentGraph({ source: 'document', nodes: [], edges: [] });
+  const graph = adaptDocumentGraph({ source: 'document', ingestion_id: null, nodes: [], edges: [] });
 
   assert.equal(graph.nodes.length, 0);
   assert.equal(graph.links.length, 0);

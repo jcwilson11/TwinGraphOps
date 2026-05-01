@@ -114,6 +114,7 @@ class DocumentGraphEdge(BaseModel):
 
 class DocumentMergedGraph(BaseModel):
     source: str = "document"
+    ingestion_id: str | None = None
     nodes: list[DocumentGraphNode] = Field(default_factory=list)
     edges: list[DocumentGraphEdge] = Field(default_factory=list)
 

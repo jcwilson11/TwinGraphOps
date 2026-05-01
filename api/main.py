@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 import os
@@ -5,6 +6,7 @@ import re
 import time
 import traceback
 import uuid
+import zipfile
 from collections import deque
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -14,7 +16,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from neo4j import GraphDatabase
 
 from document_pipeline import (
@@ -74,6 +76,9 @@ LOGGER.setLevel(logging.INFO)
 INGESTION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 ARTIFACT_FILENAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 ARTIFACT_DIR_NAMESPACE = uuid.UUID("6aef8b2d-51f2-4f8a-9519-5c6dbfe5375a")
+DOCUMENT_ARTIFACT_BUNDLE_FILENAME = "document_source_materials.zip"
+DOCUMENT_ARTIFACT_FINAL_MARKDOWN = "source_document.md"
+DOCUMENT_ARTIFACT_MERGED_JSON = "merged_document_graph.json"
 
 if not LOGGER.handlers:
     handler = logging.StreamHandler()
@@ -868,7 +873,8 @@ def fetch_document_graph_from_store() -> DocumentMergedGraph:
                        d.evidence_json AS evidence_json,
                        d.sources_json AS sources_json,
                        d.degree AS degree,
-                       d.source AS source
+                       d.source AS source,
+                       d.ingestion_id AS ingestion_id
                 ORDER BY d.canonical_name
                 """
             )
@@ -920,7 +926,15 @@ def fetch_document_graph_from_store() -> DocumentMergedGraph:
         )
         for record in edge_records
     ]
-    return DocumentMergedGraph(nodes=nodes, edges=edges)
+    ingestion_id = next(
+        (
+            str(record["ingestion_id"])
+            for record in node_records
+            if record["ingestion_id"]
+        ),
+        None,
+    )
+    return DocumentMergedGraph(ingestion_id=ingestion_id, nodes=nodes, edges=edges)
 
 
 def fetch_graph_from_store() -> MergedGraph:
@@ -1204,9 +1218,95 @@ def _document_graph_counts(graph: DocumentMergedGraph) -> dict[str, int]:
 def _serialize_document_graph(graph: DocumentMergedGraph) -> dict[str, Any]:
     return {
         "source": graph.source,
+        "ingestion_id": graph.ingestion_id,
         "nodes": [model_dump_compat(node) for node in graph.nodes],
         "edges": [model_dump_compat(edge) for edge in graph.edges],
     }
+
+
+def _artifact_download_url(ingestion_id: str, artifact_id: str) -> str:
+    return f"/api/document/artifacts/{ingestion_id}/files/{artifact_id}"
+
+
+def _artifact_bundle_download_url(ingestion_id: str) -> str:
+    return f"/api/document/artifacts/{ingestion_id}/bundle"
+
+
+def _document_artifact_id_for_relative_path(relative_path: str) -> str:
+    if relative_path == DOCUMENT_ARTIFACT_FINAL_MARKDOWN:
+        return "final-markdown"
+    if relative_path == DOCUMENT_ARTIFACT_MERGED_JSON:
+        return "merged-json"
+    if relative_path.startswith("chunks/") and relative_path.endswith(".md"):
+        return f"chunk-{Path(relative_path).stem}"
+    raise ApiError(404, "document_artifact_not_found", "Document artifact is not available for download.")
+
+
+def _document_artifact_type_for_relative_path(relative_path: str) -> str:
+    if relative_path == DOCUMENT_ARTIFACT_FINAL_MARKDOWN:
+        return "final-markdown"
+    if relative_path == DOCUMENT_ARTIFACT_MERGED_JSON:
+        return "merged-json"
+    if relative_path.startswith("chunks/") and relative_path.endswith(".md"):
+        return "chunk-markdown"
+    raise ApiError(404, "document_artifact_not_found", "Document artifact is not available for download.")
+
+
+def _iter_allowed_document_artifact_paths(artifact_dir: Path) -> list[str]:
+    allowed = []
+    final_markdown = _artifact_relative_path(artifact_dir, DOCUMENT_ARTIFACT_FINAL_MARKDOWN)
+    if final_markdown.is_file():
+        allowed.append(DOCUMENT_ARTIFACT_FINAL_MARKDOWN)
+
+    chunk_dir = _artifact_relative_path(artifact_dir, "chunks")
+    if chunk_dir.exists() and chunk_dir.is_dir():
+        for chunk_path in sorted(chunk_dir.glob("*.md")):
+            allowed.append(chunk_path.relative_to(artifact_dir).as_posix())
+
+    merged_json = _artifact_relative_path(artifact_dir, DOCUMENT_ARTIFACT_MERGED_JSON)
+    if merged_json.is_file():
+        allowed.append(DOCUMENT_ARTIFACT_MERGED_JSON)
+
+    return allowed
+
+
+def _build_document_artifact_manifest(ingestion_id: str) -> dict[str, Any]:
+    artifact_dir = get_artifact_dir(ingestion_id)
+    allowed_paths = _iter_allowed_document_artifact_paths(artifact_dir)
+    artifacts = []
+
+    for relative_path in allowed_paths:
+        artifact_path = _artifact_relative_path(artifact_dir, relative_path)
+        artifact_id = _document_artifact_id_for_relative_path(relative_path)
+        artifact_type = _document_artifact_type_for_relative_path(relative_path)
+        artifacts.append(
+            {
+                "id": artifact_id,
+                "type": artifact_type,
+                "filename": Path(relative_path).name,
+                "relative_path": relative_path,
+                "size_bytes": artifact_path.stat().st_size,
+                "download_url": _artifact_download_url(ingestion_id, artifact_id),
+            }
+        )
+
+    chunk_artifacts = [artifact for artifact in artifacts if artifact["type"] == "chunk-markdown"]
+    return {
+        "ingestion_id": ingestion_id,
+        "bundle": {
+            "filename": DOCUMENT_ARTIFACT_BUNDLE_FILENAME,
+            "download_url": _artifact_bundle_download_url(ingestion_id),
+        },
+        "artifacts": artifacts,
+        "chunk_artifacts": chunk_artifacts,
+    }
+
+
+def _get_document_artifact_relative_path(artifact_dir: Path, artifact_id: str) -> str:
+    for relative_path in _iter_allowed_document_artifact_paths(artifact_dir):
+        if _document_artifact_id_for_relative_path(relative_path) == artifact_id:
+            return relative_path
+    raise ApiError(404, "document_artifact_not_found", "Document artifact is not available for download.")
 
 
 def _run_document_ingestion_background_job(
@@ -1671,6 +1771,51 @@ def get_document_graph():
         edge_count=len(graph.edges),
     )
     return success_response(_serialize_document_graph(graph))
+
+
+@app.get("/document/artifacts")
+def get_active_document_artifacts():
+    graph = fetch_document_graph_from_store()
+    if not graph.ingestion_id:
+        raise ApiError(404, "document_artifacts_unavailable", "No active document artifact manifest is available.")
+    return success_response(_build_document_artifact_manifest(graph.ingestion_id))
+
+
+@app.get("/document/artifacts/{ingestion_id}")
+def get_document_artifacts(ingestion_id: str):
+    normalized_ingestion_id = normalize_ingestion_id(ingestion_id)
+    return success_response(_build_document_artifact_manifest(normalized_ingestion_id))
+
+
+@app.get("/document/artifacts/{ingestion_id}/files/{artifact_id}")
+def download_document_artifact(ingestion_id: str, artifact_id: str):
+    normalized_ingestion_id = normalize_ingestion_id(ingestion_id)
+    artifact_dir = get_artifact_dir(normalized_ingestion_id)
+    relative_path = _get_document_artifact_relative_path(artifact_dir, artifact_id)
+    artifact_path = _artifact_relative_path(artifact_dir, relative_path)
+    if not artifact_path.is_file():
+        raise ApiError(404, "document_artifact_not_found", "Document artifact is not available for download.")
+    return FileResponse(path=artifact_path, filename=artifact_path.name)
+
+
+@app.get("/document/artifacts/{ingestion_id}/bundle")
+def download_document_artifact_bundle(ingestion_id: str):
+    normalized_ingestion_id = normalize_ingestion_id(ingestion_id)
+    artifact_dir = get_artifact_dir(normalized_ingestion_id)
+    allowed_paths = _iter_allowed_document_artifact_paths(artifact_dir)
+    if not allowed_paths:
+        raise ApiError(404, "document_artifact_not_found", "Document artifact bundle is not available for download.")
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for relative_path in allowed_paths:
+            artifact_path = _artifact_relative_path(artifact_dir, relative_path)
+            if artifact_path.is_file():
+                archive.writestr(relative_path, artifact_path.read_bytes())
+
+    buffer.seek(0)
+    headers = {"Content-Disposition": f'attachment; filename="{DOCUMENT_ARTIFACT_BUNDLE_FILENAME}"'}
+    return StreamingResponse(buffer, media_type="application/zip", headers=headers)
 
 
 @app.get("/impact")

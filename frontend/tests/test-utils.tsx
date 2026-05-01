@@ -215,6 +215,7 @@ export function createSampleDocumentGraphData() {
 
   return {
     source: 'document',
+    ingestionId: 'doc-123',
     nodes,
     links: [
       {
@@ -276,6 +277,8 @@ export function createMockContext(overrides = {}) {
       data: null,
       error: null,
       lastLoadedAt: null,
+      artifacts: null,
+      artifactsError: null,
     },
     uploadedGraphUpload: {
       phase: 'idle',

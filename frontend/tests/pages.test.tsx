@@ -17,6 +17,7 @@ const { default: LandingPage } = await import('../src/pages/LandingPage');
 const { default: ProcessingPage } = await import('../src/pages/ProcessingPage');
 const { default: SystemOverview } = await import('../src/components/SystemOverview');
 const { default: DocumentUploadPage } = await import('../src/pages/DocumentUploadPage');
+const { default: DocumentWorkspace } = await import('../src/pages/DocumentWorkspace');
 const { default: DocumentOverview } = await import('../src/components/DocumentOverview');
 const { default: UploadedGraphUploadPage } = await import('../src/pages/UploadedGraphUploadPage');
 const { default: UploadedGraphWorkspace } = await import('../src/pages/UploadedGraphWorkspace');
@@ -148,4 +149,122 @@ test('document overview renders the loaded document graph summary', () => {
   assert.match(html, /Document Nodes/);
   assert.match(html, /Evidence Items/);
   assert.match(html, /Retention Policy/);
+});
+
+test('document workspace renders source-material downloads when artifacts are available', () => {
+  const graphData = createSampleDocumentGraphData();
+  const html = renderWithContext(
+    <DocumentWorkspace />,
+    {
+      documentGraph: {
+        ...createMockContext().documentGraph,
+        status: 'ready',
+        data: graphData,
+        artifacts: {
+          ingestion_id: 'doc-123',
+          bundle: {
+            filename: 'document_source_materials.zip',
+            download_url: '/api/document/artifacts/doc-123/bundle',
+          },
+          artifacts: [
+            {
+              id: 'final-markdown',
+              type: 'final-markdown',
+              filename: 'source_document.md',
+              relative_path: 'source_document.md',
+              size_bytes: 128,
+              download_url: '/api/document/artifacts/doc-123/files/final-markdown',
+            },
+            {
+              id: 'merged-json',
+              type: 'merged-json',
+              filename: 'merged_document_graph.json',
+              relative_path: 'merged_document_graph.json',
+              size_bytes: 256,
+              download_url: '/api/document/artifacts/doc-123/files/merged-json',
+            },
+          ],
+          chunk_artifacts: [
+            {
+              id: 'chunk-source_document_part_001',
+              type: 'chunk-markdown',
+              filename: 'source_document_part_001.md',
+              relative_path: 'chunks/source_document_part_001.md',
+              size_bytes: 64,
+              download_url: '/api/document/artifacts/doc-123/files/chunk-source_document_part_001',
+            },
+          ],
+        },
+        artifactsError: null,
+      },
+    },
+    ['/documents/workspace']
+  );
+
+  assert.match(html, /Download Source Materials/);
+  assert.match(html, /Download Bundle/);
+  assert.match(html, /Document Knowledge Graph/);
+  assert.match(html, /Evidence \/ Source Detail/);
+  assert.match(html, /source_document\.md/);
+  assert.match(html, /merged_document_graph\.json/);
+  assert.match(html, /source_document_part_001\.md/);
+});
+
+test('document workspace shows artifact error without blocking the graph workspace', () => {
+  const graphData = createSampleDocumentGraphData();
+  const html = renderWithContext(
+    <DocumentWorkspace />,
+    {
+      documentGraph: {
+        ...createMockContext().documentGraph,
+        status: 'ready',
+        data: graphData,
+        artifacts: null,
+        artifactsError: 'Source materials are temporarily unavailable.',
+      },
+    },
+    ['/documents/workspace']
+  );
+
+  assert.match(html, /Document Graph Workspace/);
+  assert.match(html, /Source materials are temporarily unavailable\./);
+});
+
+test('document workspace explains when downloads are unavailable', () => {
+  const graphData = createSampleDocumentGraphData();
+  const html = renderWithContext(
+    <DocumentWorkspace />,
+    {
+      documentGraph: {
+        ...createMockContext().documentGraph,
+        status: 'ready',
+        data: graphData,
+        artifacts: null,
+        artifactsError: null,
+      },
+    },
+    ['/documents/workspace']
+  );
+
+  assert.match(html, /Source material downloads are not available for this document yet\./);
+});
+
+test('document workspace uses a scrollable page layout instead of a viewport-locked shell', () => {
+  const graphData = createSampleDocumentGraphData();
+  const html = renderWithContext(
+    <DocumentWorkspace />,
+    {
+      documentGraph: {
+        ...createMockContext().documentGraph,
+        status: 'ready',
+        data: graphData,
+        artifacts: null,
+        artifactsError: null,
+      },
+    },
+    ['/documents/workspace']
+  );
+
+  assert.match(html, /min-h-screen bg-\[#0F172A\]/);
+  assert.doesNotMatch(html, /h-screen overflow-hidden bg-\[#0F172A\]/);
 });

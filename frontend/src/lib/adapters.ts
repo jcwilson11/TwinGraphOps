@@ -290,6 +290,7 @@ export function adaptDocumentGraph(apiGraph: ApiDocumentGraphData): DocumentGrap
 
   return {
     source,
+    ingestionId: apiGraph.ingestion_id ?? null,
     nodes,
     links,
     nodeIndex,

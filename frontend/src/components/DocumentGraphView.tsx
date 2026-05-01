@@ -92,8 +92,8 @@ export default function DocumentGraphView({ graphData, selectedNodeId, onNodeSel
   );
 
   return (
-    <div className="grid h-full min-h-0 gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <section className="glass-panel flex min-h-0 min-w-0 flex-col rounded-[28px] p-5">
+    <div className="grid min-h-[720px] gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <section className="glass-panel flex min-h-[720px] min-w-0 flex-col rounded-[28px] p-5">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800/90 pb-4">
           <div>
             <div className="flex items-center gap-2 text-sm uppercase tracking-[0.18em] text-blue-300">
@@ -122,7 +122,7 @@ export default function DocumentGraphView({ graphData, selectedNodeId, onNodeSel
           ))}
         </div>
 
-        <div ref={containerRef} className="relative mt-5 min-h-[360px] flex-1 overflow-hidden rounded-[24px] border border-slate-700 bg-[#d9d9d9]">
+        <div ref={containerRef} className="relative mt-5 min-h-[560px] flex-1 overflow-hidden rounded-[24px] border border-slate-700 bg-[#d9d9d9]">
           <div className="absolute right-4 top-4 z-10 rounded-full border border-slate-400 bg-white/90 px-4 py-2 text-xs text-slate-700">
             Drag to pan, scroll to zoom, click a node for evidence
           </div>
@@ -186,7 +186,7 @@ export default function DocumentGraphView({ graphData, selectedNodeId, onNodeSel
         </div>
       </section>
 
-      <aside className="glass-panel scrollbar-thin flex min-h-0 flex-col overflow-y-auto rounded-[28px] p-5">
+      <aside className="glass-panel scrollbar-thin flex min-h-[720px] flex-col overflow-y-auto rounded-[28px] p-5">
         <div className="flex items-start justify-between gap-3 border-b border-slate-800/90 pb-4">
           <div>
             <p className="text-sm uppercase tracking-[0.18em] text-blue-300">Evidence / Source Detail</p>

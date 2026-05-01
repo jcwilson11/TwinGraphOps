@@ -3,6 +3,7 @@ import type {
   ApiGraphData,
   ApiPayload,
   ApiDocumentGraphData,
+  DocumentArtifactManifest,
   DocumentIngestResponse,
   ImpactResponse,
   IngestResponse,
@@ -163,6 +164,22 @@ export async function getGraph() {
 
 export async function getDocumentGraph() {
   return request<ApiDocumentGraphData>('/document/graph');
+}
+
+export async function getActiveDocumentArtifacts() {
+  return request<DocumentArtifactManifest>('/document/artifacts');
+}
+
+export async function getDocumentArtifacts(ingestionId: string) {
+  return request<DocumentArtifactManifest>(`/document/artifacts/${encodeURIComponent(ingestionId)}`);
+}
+
+export function getDocumentArtifactDownloadUrl(ingestionId: string, artifactId: string) {
+  return `/api/document/artifacts/${encodeURIComponent(ingestionId)}/files/${encodeURIComponent(artifactId)}`;
+}
+
+export function getDocumentArtifactBundleDownloadUrl(ingestionId: string) {
+  return `/api/document/artifacts/${encodeURIComponent(ingestionId)}/bundle`;
 }
 
 export async function getRisk(componentId: string) {

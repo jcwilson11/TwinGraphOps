@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { BarChart3, FileText, List, Loader2, Network, RefreshCcw, Upload } from 'lucide-react';
+import { BarChart3, Download, FileJson, FileText, List, Loader2, Network, RefreshCcw, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import DocumentNodesEdgesView from '../components/DocumentNodesEdgesView';
 import DocumentOverview from '../components/DocumentOverview';
@@ -88,10 +88,14 @@ export default function DocumentWorkspace() {
   }
 
   const graphData = documentGraph.data;
+  const artifactManifest = documentGraph.artifacts;
+  const finalMarkdownArtifact = artifactManifest?.artifacts.find((artifact) => artifact.type === 'final-markdown') ?? null;
+  const mergedJsonArtifact = artifactManifest?.artifacts.find((artifact) => artifact.type === 'merged-json') ?? null;
+  const chunkArtifacts = artifactManifest?.chunk_artifacts ?? [];
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#0F172A]">
-      <aside className="hidden h-full w-72 shrink-0 border-r border-slate-800 bg-slate-950/95 xl:flex xl:flex-col">
+    <div className="flex min-h-screen bg-[#0F172A]">
+      <aside className="hidden min-h-screen w-72 shrink-0 border-r border-slate-800 bg-slate-950/95 xl:flex xl:flex-col xl:self-stretch">
         <div className="border-b border-slate-800 px-6 py-7">
           <div className="flex items-center gap-3">
             <div className="rounded-2xl bg-blue-500/15 p-3 text-blue-300">
@@ -174,7 +178,7 @@ export default function DocumentWorkspace() {
         </div>
       </aside>
 
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <main className="flex min-w-0 flex-1 flex-col">
         <header className="border-b border-slate-800 bg-slate-950/60 px-6 py-4">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
@@ -194,12 +198,88 @@ export default function DocumentWorkspace() {
           </div>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-hidden">
+        <div className="flex-1">
+          <section className="border-b border-slate-800 bg-slate-950/40 px-6 py-4">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-400">Download Source Materials</h2>
+                <p className="mt-2 text-sm text-slate-300">
+                  Download the finalized markdown, chunked markdown files, and merged document graph JSON for this workspace.
+                </p>
+              </div>
+
+              {artifactManifest ? (
+                <a
+                  href={artifactManifest.bundle.download_url}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-950/40 transition-all hover:bg-blue-500"
+                >
+                  <Download className="h-4 w-4" />
+                  <span>Download Bundle</span>
+                </a>
+              ) : null}
+            </div>
+
+            {artifactManifest ? (
+              <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)]">
+                <a
+                  href={finalMarkdownArtifact?.download_url || '#'}
+                  className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 transition hover:border-slate-600 hover:bg-slate-900"
+                >
+                  <div className="flex items-center gap-3 text-white">
+                    <FileText className="h-5 w-5 text-blue-300" />
+                    <span className="font-medium">Final Markdown</span>
+                  </div>
+                  <p className="mt-2 text-sm text-slate-400">{finalMarkdownArtifact?.filename || 'Unavailable'}</p>
+                </a>
+
+                <a
+                  href={mergedJsonArtifact?.download_url || '#'}
+                  className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 transition hover:border-slate-600 hover:bg-slate-900"
+                >
+                  <div className="flex items-center gap-3 text-white">
+                    <FileJson className="h-5 w-5 text-emerald-300" />
+                    <span className="font-medium">Merged JSON</span>
+                  </div>
+                  <p className="mt-2 text-sm text-slate-400">{mergedJsonArtifact?.filename || 'Unavailable'}</p>
+                </a>
+
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                  <div className="flex items-center gap-3 text-white">
+                    <FileText className="h-5 w-5 text-amber-300" />
+                    <span className="font-medium">Chunked Markdown Files</span>
+                  </div>
+                  <p className="mt-2 text-sm text-slate-400">
+                    {chunkArtifacts.length} chunk file{chunkArtifacts.length === 1 ? '' : 's'}
+                  </p>
+                  <div className="mt-3 max-h-32 space-y-2 overflow-auto pr-1">
+                    {chunkArtifacts.map((artifact) => (
+                      <a
+                        key={artifact.id}
+                        href={artifact.download_url}
+                        className="block truncate text-sm text-blue-300 transition hover:text-blue-200"
+                      >
+                        {artifact.filename}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : documentGraph.artifactsError ? (
+              <div className="mt-4">
+                <StatusBanner tone="error" message={documentGraph.artifactsError} />
+              </div>
+            ) : (
+              <div className="mt-4">
+                <StatusBanner tone="info" message="Source material downloads are not available for this document yet." />
+              </div>
+            )}
+          </section>
+
           {currentView === 'graph' && (
-            <div className="h-full p-6">
+            <div className="p-6">
               <Suspense
                 fallback={
-                  <div className="flex h-full items-center justify-center rounded-[24px] border border-slate-700 bg-[#d9d9d9]">
+                  <div className="flex min-h-[720px] items-center justify-center rounded-[24px] border border-slate-700 bg-[#d9d9d9]">
                     <div className="flex items-center gap-3 text-slate-700">
                       <Loader2 className="h-5 w-5 animate-spin" />
                       <span>Loading graph view...</span>

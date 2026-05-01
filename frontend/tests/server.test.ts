@@ -204,6 +204,10 @@ test('document routes proxy graph events and uploads to the backend', async () =
   await withServer(app, async (baseUrl) => {
     await fetch(`${baseUrl}/api/document/graph`);
     await fetch(`${baseUrl}/api/document/ingest/doc-1/events`);
+    await fetch(`${baseUrl}/api/document/artifacts`);
+    await fetch(`${baseUrl}/api/document/artifacts/doc-1`);
+    await fetch(`${baseUrl}/api/document/artifacts/doc-1/files/final-markdown`);
+    await fetch(`${baseUrl}/api/document/artifacts/doc-1/bundle`);
     await fetch(`${baseUrl}/api/document/ingest`, {
       method: 'POST',
       headers: { 'content-type': 'multipart/form-data; boundary=test' },
@@ -213,8 +217,12 @@ test('document routes proxy graph events and uploads to the backend', async () =
     assert.deepEqual(requestedUrls, [
       'http://api:8000/document/graph',
       'http://api:8000/document/ingest/doc-1/events',
+      'http://api:8000/document/artifacts',
+      'http://api:8000/document/artifacts/doc-1',
+      'http://api:8000/document/artifacts/doc-1/files/final-markdown',
+      'http://api:8000/document/artifacts/doc-1/bundle',
       'http://api:8000/document/ingest',
     ]);
-    assert.deepEqual(requestedMethods, ['GET', 'GET', 'POST']);
+    assert.deepEqual(requestedMethods, ['GET', 'GET', 'GET', 'GET', 'GET', 'GET', 'POST']);
   });
 });

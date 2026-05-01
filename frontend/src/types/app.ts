@@ -1,4 +1,11 @@
-import type { ApiDocumentGraphData, ApiMergedGraphData, DocumentIngestResponse, IngestResponse, ProcessingStatus } from './api';
+import type {
+  ApiDocumentGraphData,
+  ApiMergedGraphData,
+  DocumentArtifactManifest,
+  DocumentIngestResponse,
+  IngestResponse,
+  ProcessingStatus,
+} from './api';
 
 export type UploadPhase =
   | 'idle'
@@ -166,6 +173,7 @@ export interface DocumentEdge {
 
 export interface DocumentGraphData {
   source: string;
+  ingestionId: string | null;
   nodes: DocumentNode[];
   links: DocumentEdge[];
   nodeIndex: Record<string, DocumentNode>;
@@ -191,4 +199,6 @@ export interface DocumentGraphState {
   data: DocumentGraphData | null;
   error: string | null;
   lastLoadedAt: number | null;
+  artifacts: DocumentArtifactManifest | null;
+  artifactsError: string | null;
 }

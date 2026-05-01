@@ -225,6 +225,32 @@ function createApp(options = {}) {
     }
   }
 
+  async function proxy(res, method, targetUrl) {
+    try {
+      const response = await fetchImpl(targetUrl, {
+        method,
+      });
+
+      res.statusCode = response.status;
+      response.headers.forEach((value, key) => {
+        if (key.toLowerCase() === 'transfer-encoding') {
+          return;
+        }
+        res.setHeader(key, value);
+      });
+
+      if (!response.body) {
+        res.end();
+        return;
+      }
+
+      const bodyBuffer = Buffer.from(await response.arrayBuffer());
+      res.end(bodyBuffer);
+    } catch (error) {
+      sendProxyFailure(res, error);
+    }
+  }
+
   function sendMissingBuildResponse(res) {
     sendText(
       res,
@@ -386,6 +412,48 @@ function createApp(options = {}) {
 
       if (req.method === 'GET' && pathname === '/api/document/graph') {
         await proxyJson(res, 'GET', `${config.apiBaseUrl}/document/graph${search}`);
+        return;
+      }
+
+      if (req.method === 'GET' && pathname === '/api/document/artifacts') {
+        await proxyJson(res, 'GET', `${config.apiBaseUrl}/document/artifacts${search}`);
+        return;
+      }
+
+      const documentArtifactsMatch =
+        req.method === 'GET' ? pathname.match(/^\/api\/document\/artifacts\/([^/]+)$/) : null;
+      if (documentArtifactsMatch) {
+        const ingestionId = documentArtifactsMatch[1];
+        await proxyJson(
+          res,
+          'GET',
+          `${config.apiBaseUrl}/document/artifacts/${encodeURIComponent(ingestionId)}${search}`
+        );
+        return;
+      }
+
+      const documentArtifactFileMatch =
+        req.method === 'GET' ? pathname.match(/^\/api\/document\/artifacts\/([^/]+)\/files\/([^/]+)$/) : null;
+      if (documentArtifactFileMatch) {
+        const ingestionId = documentArtifactFileMatch[1];
+        const artifactId = documentArtifactFileMatch[2];
+        await proxy(
+          res,
+          'GET',
+          `${config.apiBaseUrl}/document/artifacts/${encodeURIComponent(ingestionId)}/files/${encodeURIComponent(artifactId)}${search}`
+        );
+        return;
+      }
+
+      const documentArtifactBundleMatch =
+        req.method === 'GET' ? pathname.match(/^\/api\/document\/artifacts\/([^/]+)\/bundle$/) : null;
+      if (documentArtifactBundleMatch) {
+        const ingestionId = documentArtifactBundleMatch[1];
+        await proxy(
+          res,
+          'GET',
+          `${config.apiBaseUrl}/document/artifacts/${encodeURIComponent(ingestionId)}/bundle${search}`
+        );
         return;
       }
 

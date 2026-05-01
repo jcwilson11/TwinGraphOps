@@ -2,6 +2,7 @@ import io
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,6 +22,8 @@ from models import (
     DocumentChunkGraph,
     DocumentChunkNode,
     DocumentEvidence,
+    DocumentGraphNode,
+    DocumentMergedGraph,
     DocumentSource,
     MergedGraph,
     model_dump_compat,
@@ -67,6 +70,32 @@ class TwinGraphOpsApiTests(unittest.TestCase):
         response = self.client.get("/metrics")
         self.assertEqual(response.status_code, 200)
         return response.text
+
+    def _build_document_merged_graph(self, ingestion_id: str = "doc-ingest-01") -> DocumentMergedGraph:
+        return DocumentMergedGraph(
+            ingestion_id=ingestion_id,
+            nodes=[
+                DocumentGraphNode(
+                    id="D1",
+                    label="Retention Policy",
+                    kind="requirement",
+                    canonical_name="Retention Policy",
+                    evidence=[DocumentEvidence(quote="Records are retained for 7 years.", page_start=1, page_end=1)],
+                    sources=[
+                        DocumentSource(
+                            document_name="manual.pdf",
+                            chunk_file="chunks/source_document_part_001.md",
+                            chunk_id="source_document_part_001",
+                            pdf_page_start=1,
+                            pdf_page_end=1,
+                        )
+                    ],
+                    degree=1,
+                    source="document",
+                )
+            ],
+            edges=[],
+        )
 
     def test_root_exposes_operational_routes(self):
         response = self.client.get("/")
@@ -274,6 +303,83 @@ class TwinGraphOpsApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 415)
         self.assertEqual(response.json()["error"]["code"], "unsupported_file_type")
+
+    def test_active_document_artifact_manifest_returns_only_allowed_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_dir = main.get_artifact_dir("doc-ingest-01")
+            with patch.object(main, "get_artifacts_root", return_value=Path(tmpdir)):
+                artifact_dir = main.get_artifact_dir("doc-ingest-01")
+                artifact_dir.mkdir(parents=True, exist_ok=True)
+                (artifact_dir / "source_document.md").write_text("Full markdown", encoding="utf-8")
+                (artifact_dir / "merged_document_graph.json").write_text('{"nodes":[],"edges":[]}', encoding="utf-8")
+                chunks_dir = artifact_dir / "chunks"
+                chunks_dir.mkdir(parents=True, exist_ok=True)
+                (chunks_dir / "source_document_part_001.md").write_text("Chunk one", encoding="utf-8")
+                (chunks_dir / "source_document_part_001_prompt.txt").write_text("Prompt", encoding="utf-8")
+                (chunks_dir / "source_document_part_001_response.json").write_text("{}", encoding="utf-8")
+
+                with patch.object(main, "fetch_document_graph_from_store", return_value=self._build_document_merged_graph()):
+                    response = self.client.get("/document/artifacts")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()["data"]
+            self.assertEqual(payload["ingestion_id"], "doc-ingest-01")
+            self.assertEqual(
+                [artifact["filename"] for artifact in payload["artifacts"]],
+                ["source_document.md", "source_document_part_001.md", "merged_document_graph.json"],
+            )
+            self.assertEqual([artifact["type"] for artifact in payload["chunk_artifacts"]], ["chunk-markdown"])
+
+    def test_document_artifact_download_rejects_disallowed_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(main, "get_artifacts_root", return_value=Path(tmpdir)):
+            artifact_dir = main.get_artifact_dir("doc-ingest-01")
+            chunks_dir = artifact_dir / "chunks"
+            chunks_dir.mkdir(parents=True, exist_ok=True)
+            (chunks_dir / "source_document_part_001_prompt.txt").write_text("Prompt", encoding="utf-8")
+
+            response = self.client.get("/document/artifacts/doc-ingest-01/files/chunk-source_document_part_001_prompt")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], "document_artifact_not_found")
+
+    def test_document_artifact_download_serves_allowed_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(main, "get_artifacts_root", return_value=Path(tmpdir)):
+            artifact_dir = main.get_artifact_dir("doc-ingest-01")
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            (artifact_dir / "source_document.md").write_text("Full markdown", encoding="utf-8")
+
+            response = self.client.get("/document/artifacts/doc-ingest-01/files/final-markdown")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.text, "Full markdown")
+        self.assertIn('filename="source_document.md"', response.headers["content-disposition"])
+
+    def test_document_artifact_bundle_contains_only_allowed_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(main, "get_artifacts_root", return_value=Path(tmpdir)):
+            artifact_dir = main.get_artifact_dir("doc-ingest-01")
+            chunks_dir = artifact_dir / "chunks"
+            chunks_dir.mkdir(parents=True, exist_ok=True)
+            (artifact_dir / "source_document.md").write_text("Full markdown", encoding="utf-8")
+            (artifact_dir / "merged_document_graph.json").write_text('{"nodes":[],"edges":[]}', encoding="utf-8")
+            (chunks_dir / "source_document_part_001.md").write_text("Chunk one", encoding="utf-8")
+            (chunks_dir / "source_document_part_001_prompt.txt").write_text("Prompt", encoding="utf-8")
+
+            response = self.client.get("/document/artifacts/doc-ingest-01/bundle")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "application/zip")
+        archive = zipfile.ZipFile(io.BytesIO(response.content))
+        self.assertEqual(
+            sorted(archive.namelist()),
+            ["chunks/source_document_part_001.md", "merged_document_graph.json", "source_document.md"],
+        )
+
+    def test_document_graph_response_includes_active_ingestion_id(self):
+        with patch.object(main, "fetch_document_graph_from_store", return_value=self._build_document_merged_graph("doc-ingest-77")):
+            response = self.client.get("/document/graph")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["ingestion_id"], "doc-ingest-77")
 
     def test_ingest_rejects_empty_upload(self):
         response = self.client.post(

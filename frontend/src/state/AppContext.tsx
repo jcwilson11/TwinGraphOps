@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { adaptDocumentGraph, adaptGraph, adaptMergedGraph } from '../lib/adapters';
 import {
   ApiClientError,
+  getDocumentArtifacts,
   getDocumentGraph,
   getDocumentProcessingStatus,
   getGraph,
@@ -104,7 +105,12 @@ const initialDocumentGraphState: DocumentGraphState = {
   data: null,
   error: null,
   lastLoadedAt: null,
+  artifacts: null,
+  artifactsError: null,
 };
+
+const DOCUMENT_ARTIFACT_FETCH_ATTEMPTS = 5;
+const DOCUMENT_ARTIFACT_FETCH_DELAY_MS = 800;
 
 export const supportedExtensions = ['.md', '.txt'];
 export const supportedDocumentExtensions = ['.pdf', '.md', '.txt'];
@@ -269,6 +275,7 @@ function ensureDocumentUploadedGraphShape(payload: unknown): ApiDocumentGraphDat
 
   return {
     source: candidate.source as ApiDocumentGraphData['source'],
+    ingestion_id: null,
     nodes: candidate.nodes as ApiDocumentGraphData['nodes'],
     edges: candidate.edges as ApiDocumentGraphData['edges'],
   };
@@ -371,6 +378,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [uploadedGraph, setUploadedGraph] = useState<UploadedGraphState>(initialUploadedGraphState);
   const processingPromiseRef = useRef<Promise<void> | null>(null);
   const documentProcessingPromiseRef = useRef<Promise<void> | null>(null);
+
+  const getDocumentArtifactsWithRetry = useCallback(async (ingestionId: string) => {
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < DOCUMENT_ARTIFACT_FETCH_ATTEMPTS; attempt += 1) {
+      try {
+        return await getDocumentArtifacts(ingestionId);
+      } catch (error) {
+        lastError = error;
+        if (attempt < DOCUMENT_ARTIFACT_FETCH_ATTEMPTS - 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, DOCUMENT_ARTIFACT_FETCH_DELAY_MS));
+        }
+      }
+    }
+    throw lastError;
+  }, []);
 
   const setDragActive = useCallback((active: boolean) => {
     setUpload((current) => {
@@ -494,16 +516,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ...current,
       status: 'loading',
       error: null,
+      artifactsError: current.artifactsError,
     }));
 
     try {
       const payload = await getDocumentGraph();
       const adaptedGraph = adaptDocumentGraph(payload);
+      const artifactManifest = adaptedGraph.ingestionId
+        ? await getDocumentArtifactsWithRetry(adaptedGraph.ingestionId).catch(() => null)
+        : null;
       setDocumentGraph({
         status: 'ready',
         data: adaptedGraph,
         error: null,
         lastLoadedAt: Date.now(),
+        artifacts: artifactManifest,
+        artifactsError:
+          adaptedGraph.ingestionId && !artifactManifest
+            ? 'Source materials are temporarily unavailable for this document right now.'
+            : !adaptedGraph.ingestionId
+              ? 'Source material downloads are unavailable because this document graph was loaded without an ingestion ID.'
+              : null,
       });
 
       if (!options?.keepStatus) {
@@ -525,6 +558,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         data: null,
         error: message,
         lastLoadedAt: null,
+        artifacts: null,
+        artifactsError: null,
       });
       throw error;
     }
@@ -786,12 +821,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         const graphPayload = await getDocumentGraph();
         const adaptedGraph = adaptDocumentGraph(graphPayload);
+        const artifactManifest = adaptedGraph.ingestionId
+          ? await getDocumentArtifactsWithRetry(adaptedGraph.ingestionId).catch(() => null)
+          : null;
 
         setDocumentGraph({
           status: 'ready',
           data: adaptedGraph,
           error: null,
           lastLoadedAt: Date.now(),
+          artifacts: artifactManifest,
+          artifactsError:
+            adaptedGraph.ingestionId && !artifactManifest
+              ? 'Source materials are temporarily unavailable for this document right now.'
+              : !adaptedGraph.ingestionId
+                ? 'Source material downloads are unavailable because this document graph was loaded without an ingestion ID.'
+                : null,
         });
 
         setDocumentUpload((current) => ({

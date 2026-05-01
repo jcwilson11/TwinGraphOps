@@ -171,6 +171,28 @@ export interface ApiDocumentEdge {
 
 export interface ApiDocumentGraphData {
   source: string;
+  ingestion_id: string | null;
   nodes: ApiDocumentNode[];
   edges: ApiDocumentEdge[];
+}
+
+export interface DocumentArtifactEntry {
+  id: string;
+  type: 'final-markdown' | 'merged-json' | 'chunk-markdown';
+  filename: string;
+  relative_path: string;
+  size_bytes: number;
+  download_url: string;
+}
+
+export interface DocumentArtifactBundle {
+  filename: string;
+  download_url: string;
+}
+
+export interface DocumentArtifactManifest {
+  ingestion_id: string;
+  bundle: DocumentArtifactBundle;
+  artifacts: DocumentArtifactEntry[];
+  chunk_artifacts: DocumentArtifactEntry[];
 }
