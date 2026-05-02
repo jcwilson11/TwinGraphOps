@@ -203,8 +203,8 @@ test('document workspace renders source-material downloads when artifacts are av
 
   assert.match(html, /Download Source Materials/);
   assert.match(html, /Download Bundle/);
-  assert.match(html, /Document Knowledge Graph/);
-  assert.match(html, /Evidence \/ Source Detail/);
+  assert.match(html, /Document Graph Workspace/);
+  assert.match(html, /Loading graph view/);
   assert.match(html, /source_document\.md/);
   assert.match(html, /merged_document_graph\.json/);
   assert.match(html, /source_document_part_001\.md/);
