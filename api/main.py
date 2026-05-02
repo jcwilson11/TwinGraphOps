@@ -1309,12 +1309,69 @@ def _get_document_artifact_relative_path(artifact_dir: Path, artifact_id: str) -
     raise ApiError(404, "document_artifact_not_found", "Document artifact is not available for download.")
 
 
+def _convert_and_validate_pdf_markdown(raw: bytes, ingestion_id: str, filename: str) -> str:
+    log_event("info", "document_pdf_conversion_started", ingestion_id=ingestion_id, filename=filename)
+    try:
+        text = convert_pdf_bytes_to_markdown(raw)
+    except Exception as exc:
+        log_event(
+            "error",
+            "document_pdf_conversion_failed",
+            ingestion_id=ingestion_id,
+            filename=filename,
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+        )
+        raise ApiError(422, "pdf_conversion_failed", f"Unable to convert PDF to markdown: {exc}") from exc
+
+    if not text.strip():
+        raise ApiError(400, "empty_upload", "PDF conversion produced no markdown text.")
+
+    log_event(
+        "info",
+        "document_pdf_conversion_completed",
+        ingestion_id=ingestion_id,
+        filename=filename,
+        markdown_chars=len(text),
+    )
+
+    try:
+        chunking = split_document_markdown_parts(text, source_stem="source_document")
+    except DocumentPageMarkerError as exc:
+        log_event(
+            "error",
+            "document_chunking_failed",
+            ingestion_id=ingestion_id,
+            filename=filename,
+            error_code="invalid_page_markers",
+            error_message=str(exc),
+        )
+        raise ApiError(422, "invalid_page_markers", str(exc)) from exc
+
+    if not chunking.page_markers_detected:
+        message = "PDF conversion produced markdown without valid PDF page markers."
+        log_event(
+            "error",
+            "document_chunking_failed",
+            ingestion_id=ingestion_id,
+            filename=filename,
+            error_code="pdf_page_markers_missing",
+            error_message=message,
+            num_parts=DOCUMENT_PART_COUNT,
+            overlap_pages=DOCUMENT_PART_OVERLAP_PAGES,
+        )
+        raise ApiError(422, "pdf_page_markers_missing", message)
+
+    return text
+
+
 def _run_document_ingestion_background_job(
     filename: str,
     suffix: str,
     raw: bytes,
     replace_existing: bool,
     ingestion_id: str,
+    converted_markdown: str | None = None,
 ) -> None:
     try:
         run_document_ingestion_pipeline(
@@ -1323,6 +1380,7 @@ def _run_document_ingestion_background_job(
             raw=raw,
             replace_existing=replace_existing,
             ingestion_id=ingestion_id,
+            converted_markdown=converted_markdown,
         )
     except ApiError as exc:
         log_event(
@@ -1352,6 +1410,7 @@ def run_document_ingestion_pipeline(
     raw: bytes,
     replace_existing: bool,
     ingestion_id: str | None = None,
+    converted_markdown: str | None = None,
 ) -> dict[str, Any]:
     ingestion_id = normalize_ingestion_id(ingestion_id)
     artifact_dir = get_artifact_dir(ingestion_id)
@@ -1379,29 +1438,10 @@ def run_document_ingestion_pipeline(
 
     if suffix == ".pdf":
         _write_bytes(artifact_dir, "source_document.pdf", raw)
-        log_event("info", "document_pdf_conversion_started", ingestion_id=ingestion_id, filename=filename)
-        try:
-            text = convert_pdf_bytes_to_markdown(raw)
-        except Exception as exc:
-            log_event(
-                "error",
-                "document_pdf_conversion_failed",
-                ingestion_id=ingestion_id,
-                filename=filename,
-                error_type=type(exc).__name__,
-                error_message=str(exc),
-            )
-            raise ApiError(422, "pdf_conversion_failed", f"Unable to convert PDF to markdown: {exc}") from exc
-
-        if not text.strip():
-            raise ApiError(400, "empty_upload", "PDF conversion produced no markdown text.")
-        log_event(
-            "info",
-            "document_pdf_conversion_completed",
-            ingestion_id=ingestion_id,
-            filename=filename,
-            markdown_chars=len(text),
-        )
+        if converted_markdown is None:
+            text = _convert_and_validate_pdf_markdown(raw, ingestion_id=ingestion_id, filename=filename)
+        else:
+            text = converted_markdown
     else:
         text = raw.decode("utf-8")
 
@@ -1919,6 +1959,11 @@ def document_ingest(
     )
     effective_ingestion_id = normalize_ingestion_id(normalized_ingestion_id)
     INGESTION_EVENTS.register(effective_ingestion_id, filename)
+    converted_markdown = (
+        _convert_and_validate_pdf_markdown(raw, ingestion_id=effective_ingestion_id, filename=filename)
+        if suffix == ".pdf"
+        else None
+    )
 
     thread = Thread(
         target=_run_document_ingestion_background_job,
@@ -1928,6 +1973,7 @@ def document_ingest(
             "raw": raw,
             "replace_existing": replace_existing,
             "ingestion_id": effective_ingestion_id,
+            "converted_markdown": converted_markdown,
         },
         daemon=True,
     )
