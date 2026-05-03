@@ -305,6 +305,10 @@ jobs:
           FRONTEND_IMAGE: ${{ needs.resolve-release-images.outputs.frontend_image }}
           RELEASE_SHA: ${{ needs.resolve-release-images.outputs.release_sha }}
         run: |
+          bash ./infra/scripts/ensure-ssm-instance-online.sh \
+            --instance-id "$PROD_EC2_INSTANCE_ID" \
+            --github-output "$GITHUB_OUTPUT"
+
           cat > /tmp/twingraphops-deploy.sh <<EOF
           sudo bash -lc '
           set -euo pipefail
@@ -343,6 +347,7 @@ jobs:
             --document-name AWS-RunShellScript \
             --instance-ids "$PROD_EC2_INSTANCE_ID" \
             --comment "Deploy TwinGraphOps ${RELEASE_REF}" \
+            --timeout-seconds 600 \
             --parameters file:///tmp/ssm-commands.json \
             --query 'Command.CommandId' \
             --output text)"
@@ -421,6 +426,10 @@ jobs:
           RELEASE_SHA: ${{ needs.resolve-last-known-good-release.outputs.rollback_release_sha }}
           ROLLBACK_RELEASE_TAG: ${{ needs.resolve-last-known-good-release.outputs.rollback_release_tag }}
         run: |
+          bash ./infra/scripts/ensure-ssm-instance-online.sh \
+            --instance-id "$PROD_EC2_INSTANCE_ID" \
+            --github-output "$GITHUB_OUTPUT"
+
           cat > /tmp/twingraphops-rollback.sh <<EOF
           sudo bash -lc '
           set -euo pipefail
@@ -459,6 +468,7 @@ jobs:
             --document-name AWS-RunShellScript \
             --instance-ids "$PROD_EC2_INSTANCE_ID" \
             --comment "Rollback TwinGraphOps ${RELEASE_REF} to ${ROLLBACK_RELEASE_TAG}" \
+            --timeout-seconds 600 \
             --parameters file:///tmp/ssm-rollback-commands.json \
             --query 'Command.CommandId' \
             --output text)"
