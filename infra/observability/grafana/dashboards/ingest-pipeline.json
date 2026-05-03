@@ -12,12 +12,12 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ops"
+          "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 5,
+        "h": 4,
         "w": 6,
         "x": 0,
         "y": 0
@@ -29,20 +29,18 @@
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         }
       },
       "targets": [
         {
-          "expr": "sum(rate(twingraphops_ingest_documents_total[15m]))",
+          "expr": "sum(twingraphops_document_ingest_jobs_total{state=\"accepted\"})",
           "refId": "A"
         }
       ],
-      "title": "Documents per Second",
+      "title": "Document Jobs Accepted",
       "type": "stat"
     },
     {
@@ -50,14 +48,8 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ops"
-        },
-        "overrides": []
-      },
       "gridPos": {
-        "h": 5,
+        "h": 4,
         "w": 6,
         "x": 6,
         "y": 0
@@ -69,20 +61,18 @@
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         }
       },
       "targets": [
         {
-          "expr": "sum(rate(twingraphops_ingest_chunks_total[15m]))",
+          "expr": "twingraphops_document_ingest_in_flight",
           "refId": "A"
         }
       ],
-      "title": "Chunks per Second",
+      "title": "Document Jobs Running",
       "type": "stat"
     },
     {
@@ -90,14 +80,8 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ops"
-        },
-        "overrides": []
-      },
       "gridPos": {
-        "h": 5,
+        "h": 4,
         "w": 6,
         "x": 12,
         "y": 0
@@ -109,20 +93,18 @@
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         }
       },
       "targets": [
         {
-          "expr": "sum(rate(twingraphops_ingest_failures_total[15m]))",
+          "expr": "sum(twingraphops_document_ingest_jobs_total{state=\"succeeded\"})",
           "refId": "A"
         }
       ],
-      "title": "Ingest Failures per Second",
+      "title": "Document Jobs Succeeded",
       "type": "stat"
     },
     {
@@ -132,12 +114,24 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ops"
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 5,
+        "h": 4,
         "w": 6,
         "x": 18,
         "y": 0
@@ -149,20 +143,18 @@
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         }
       },
       "targets": [
         {
-          "expr": "sum(rate(twingraphops_gemini_retries_total[15m]))",
+          "expr": "sum(twingraphops_document_ingest_jobs_total{state=\"failed\"})",
           "refId": "A"
         }
       ],
-      "title": "Gemini Retries per Second",
+      "title": "Document Jobs Failed",
       "type": "stat"
     },
     {
@@ -171,20 +163,148 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 9,
-        "w": 12,
+        "h": 4,
+        "w": 6,
         "x": 0,
-        "y": 5
+        "y": 4
       },
       "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
       "targets": [
         {
-          "expr": "sum by (code, result) (rate(twingraphops_gemini_requests_total[5m]))",
-          "legendFormat": "{{result}} {{code}}",
+          "expr": "twingraphops_document_graph_nodes_current",
           "refId": "A"
         }
       ],
-      "title": "Gemini Request Outcomes",
+      "title": "Document Graph Nodes",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 4
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "twingraphops_document_graph_edges_current",
+          "refId": "A"
+        }
+      ],
+      "title": "Document Graph Edges",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 4
+      },
+      "id": 7,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "twingraphops_document_graph_evidence_items_current",
+          "refId": "A"
+        }
+      ],
+      "title": "Evidence Items",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 4
+      },
+      "id": 8,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "twingraphops_document_ingest_chunks_total",
+          "refId": "A"
+        }
+      ],
+      "title": "Document Chunks Produced",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 9,
+      "targets": [
+        {
+          "expr": "sum by (state) (increase(twingraphops_document_ingest_jobs_total[24h]))",
+          "legendFormat": "{{state}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Document Job Lifecycle",
       "type": "timeseries"
     },
     {
@@ -193,12 +313,40 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 9,
+        "h": 8,
         "w": 12,
         "x": 12,
-        "y": 5
+        "y": 8
       },
-      "id": 6,
+      "id": 10,
+      "targets": [
+        {
+          "expr": "sum by (code, result) (rate(twingraphops_gemini_requests_total[5m]))",
+          "legendFormat": "{{result}} {{code}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Gemini Outcomes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "id": 11,
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum by (le) (rate(twingraphops_gemini_request_duration_seconds_bucket[5m])))",
@@ -220,25 +368,30 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 9,
+        "h": 8,
         "w": 12,
-        "x": 0,
-        "y": 14
+        "x": 12,
+        "y": 16
       },
-      "id": 7,
+      "id": 12,
       "targets": [
         {
-          "expr": "rate(twingraphops_graph_nodes_created_total[15m])",
-          "legendFormat": "nodes",
+          "expr": "sum by (code) (increase(twingraphops_document_ingest_failures_total[24h]))",
+          "legendFormat": "job {{code}}",
           "refId": "A"
         },
         {
-          "expr": "rate(twingraphops_graph_edges_created_total[15m])",
-          "legendFormat": "edges",
+          "expr": "sum by (code) (increase(twingraphops_document_ingest_chunk_failures_total[24h]))",
+          "legendFormat": "chunk {{code}}",
           "refId": "B"
+        },
+        {
+          "expr": "sum by (code) (increase(twingraphops_document_page_marker_failures_total[24h]))",
+          "legendFormat": "page {{code}}",
+          "refId": "C"
         }
       ],
-      "title": "Graph Object Creation Rate",
+      "title": "Document Failure Codes",
       "type": "timeseries"
     },
     {
@@ -247,20 +400,57 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 9,
+        "h": 8,
         "w": 12,
-        "x": 12,
-        "y": 14
+        "x": 0,
+        "y": 24
       },
-      "id": 8,
+      "id": 13,
       "targets": [
         {
-          "expr": "sum by (code) (increase(twingraphops_ingest_failures_total[24h]))",
-          "legendFormat": "{{code}}",
+          "expr": "rate(twingraphops_document_graph_nodes_created_total[15m])",
+          "legendFormat": "nodes",
           "refId": "A"
+        },
+        {
+          "expr": "rate(twingraphops_document_graph_edges_created_total[15m])",
+          "legendFormat": "edges",
+          "refId": "B"
+        },
+        {
+          "expr": "rate(twingraphops_document_graph_evidence_items_created_total[15m])",
+          "legendFormat": "evidence",
+          "refId": "C"
         }
       ],
-      "title": "Ingest Failures by Code",
+      "title": "Document Graph Creation Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "id": 14,
+      "targets": [
+        {
+          "expr": "twingraphops_document_graph_node_kind_current",
+          "legendFormat": "node {{kind}}",
+          "refId": "A"
+        },
+        {
+          "expr": "twingraphops_document_graph_relation_type_current",
+          "legendFormat": "relation {{type}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Node Kinds And Relation Types",
       "type": "timeseries"
     }
   ],
@@ -268,6 +458,7 @@
   "style": "dark",
   "tags": [
     "twingraphops",
+    "document-kg",
     "ingest"
   ],
   "templating": {
@@ -277,7 +468,7 @@
     "from": "now-24h",
     "to": "now"
   },
-  "title": "TwinGraphOps Ingestion Pipeline",
+  "title": "TwinGraphOps Document KG Ingestion",
   "uid": "tgo-ingest-pipeline",
-  "version": 1
+  "version": 2
 }

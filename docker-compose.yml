@@ -41,6 +41,9 @@ services:
       GEMINI_RETRY_BACKOFF_SECONDS: ${GEMINI_RETRY_BACKOFF_SECONDS:-1.0}
       ARTIFACTS_DIR: /app/runtime/artifacts
       TWIN_ENV: ${TWIN_ENV:-local}
+      TWIN_RELEASE_SHA: ${TWIN_RELEASE_SHA:-local}
+      TWIN_API_IMAGE: ${API_IMAGE:-twin_api:latest}
+      TWIN_FRONTEND_IMAGE: ${FRONTEND_IMAGE:-twin_frontend:latest}
     volumes:
       - api_artifacts:/app/runtime/artifacts
     secrets:
@@ -66,6 +69,7 @@ services:
     environment:
       PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-http://api:8000}
       TWIN_ENV: ${TWIN_ENV:-local}
+      TWIN_RELEASE_SHA: ${TWIN_RELEASE_SHA:-local}
     command: node server.js
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/healthz', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1));"]

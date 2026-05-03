@@ -313,6 +313,8 @@ def handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
     OBSERVABILITY.record_api_error(exc.code)
     if request.url.path == "/ingest":
         OBSERVABILITY.record_ingest_failure(exc.code)
+    if request.url.path == "/document/ingest":
+        OBSERVABILITY.record_document_ingest_completed(False, exc.code)
 
     log_event(
         "error",
@@ -341,6 +343,8 @@ def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
     OBSERVABILITY.record_api_error("internal_server_error")
     if request.url.path == "/ingest":
         OBSERVABILITY.record_ingest_failure("internal_server_error")
+    if request.url.path == "/document/ingest":
+        OBSERVABILITY.record_document_ingest_completed(False, "internal_server_error")
 
     log_event(
         "error",
@@ -394,6 +398,14 @@ def _load_secret(env_var: str, default: str | None = None, required: bool = Fals
 
 def get_environment() -> str:
     return os.getenv("TWIN_ENV", "local")
+
+
+def get_deployment_info() -> dict[str, str]:
+    return {
+        "release_sha": os.getenv("TWIN_RELEASE_SHA") or os.getenv("RELEASE_SHA", "unknown"),
+        "api_image": os.getenv("TWIN_API_IMAGE") or os.getenv("API_IMAGE", "unknown"),
+        "frontend_image": os.getenv("TWIN_FRONTEND_IMAGE") or os.getenv("FRONTEND_IMAGE", "unknown"),
+    }
 
 
 def get_driver():
@@ -836,6 +848,7 @@ def persist_document_graph_to_store(
         with get_driver().session() as session:
             session.execute_write(_write_document_graph_tx, graph, source, ingestion_id, replace_existing)
     except Exception as exc:
+        OBSERVABILITY.record_document_graph_persist(False)
         log_event(
             "error",
             "document_graph_persist_failed",
@@ -847,6 +860,7 @@ def persist_document_graph_to_store(
         )
         raise
 
+    OBSERVABILITY.record_document_graph_persist(True)
     log_event(
         "info",
         "document_graph_persisted",
@@ -1314,6 +1328,7 @@ def _convert_and_validate_pdf_markdown(raw: bytes, ingestion_id: str, filename: 
     try:
         text = convert_pdf_bytes_to_markdown(raw)
     except Exception as exc:
+        OBSERVABILITY.record_document_pdf_conversion(False, "pdf_conversion_failed")
         log_event(
             "error",
             "document_pdf_conversion_failed",
@@ -1325,8 +1340,10 @@ def _convert_and_validate_pdf_markdown(raw: bytes, ingestion_id: str, filename: 
         raise ApiError(422, "pdf_conversion_failed", f"Unable to convert PDF to markdown: {exc}") from exc
 
     if not text.strip():
+        OBSERVABILITY.record_document_pdf_conversion(False, "empty_upload")
         raise ApiError(400, "empty_upload", "PDF conversion produced no markdown text.")
 
+    OBSERVABILITY.record_document_pdf_conversion(True)
     log_event(
         "info",
         "document_pdf_conversion_completed",
@@ -1338,6 +1355,7 @@ def _convert_and_validate_pdf_markdown(raw: bytes, ingestion_id: str, filename: 
     try:
         chunking = split_document_markdown_parts(text, source_stem="source_document")
     except DocumentPageMarkerError as exc:
+        OBSERVABILITY.record_document_page_marker_failure("invalid_page_markers")
         log_event(
             "error",
             "document_chunking_failed",
@@ -1350,6 +1368,7 @@ def _convert_and_validate_pdf_markdown(raw: bytes, ingestion_id: str, filename: 
 
     if not chunking.page_markers_detected:
         message = "PDF conversion produced markdown without valid PDF page markers."
+        OBSERVABILITY.record_document_page_marker_failure("pdf_page_markers_missing")
         log_event(
             "error",
             "document_chunking_failed",
@@ -1383,6 +1402,7 @@ def _run_document_ingestion_background_job(
             converted_markdown=converted_markdown,
         )
     except ApiError as exc:
+        OBSERVABILITY.record_document_ingest_completed(False, exc.code)
         log_event(
             "error",
             "document_background_job_failed",
@@ -1393,6 +1413,7 @@ def _run_document_ingestion_background_job(
             details=exc.details,
         )
     except Exception as exc:
+        OBSERVABILITY.record_document_ingest_completed(False, "internal_server_error")
         log_event(
             "error",
             "document_background_job_failed",
@@ -1415,6 +1436,7 @@ def run_document_ingestion_pipeline(
     ingestion_id = normalize_ingestion_id(ingestion_id)
     artifact_dir = get_artifact_dir(ingestion_id)
     INGESTION_EVENTS.register(ingestion_id, filename)
+    OBSERVABILITY.record_document_ingest_started()
 
     log_event(
         "info",
@@ -1450,6 +1472,7 @@ def run_document_ingestion_pipeline(
     try:
         chunking = split_document_markdown_parts(text, source_stem="source_document")
     except DocumentPageMarkerError as exc:
+        OBSERVABILITY.record_document_page_marker_failure("invalid_page_markers")
         log_event(
             "error",
             "document_chunking_failed",
@@ -1461,6 +1484,7 @@ def run_document_ingestion_pipeline(
         raise ApiError(422, "invalid_page_markers", str(exc)) from exc
     if suffix == ".pdf" and not chunking.page_markers_detected:
         message = "PDF conversion produced markdown without valid PDF page markers."
+        OBSERVABILITY.record_document_page_marker_failure("pdf_page_markers_missing")
         log_event(
             "error",
             "document_chunking_failed",
@@ -1475,6 +1499,7 @@ def run_document_ingestion_pipeline(
     parts = chunking.parts
     if not parts:
         raise ApiError(400, "empty_upload", "Uploaded document is empty.")
+    OBSERVABILITY.record_document_ingest_chunks(len(parts))
 
     _write_text_relative(artifact_dir, "chunks/chunking_meta.txt", chunking.meta_text)
 
@@ -1521,6 +1546,7 @@ def run_document_ingestion_pipeline(
         try:
             graph, payload = extractor.extract_chunk(chunk_text=part.text, prompt=prompt, chunk_index=index)
         except GeminiExtractionError as exc:
+            OBSERVABILITY.record_document_ingest_chunk_failure(exc.code)
             OBSERVABILITY.observe_gemini(
                 attempts=extractor.last_attempts,
                 duration_seconds=time.perf_counter() - gemini_started_at,
@@ -1608,6 +1634,7 @@ def run_document_ingestion_pipeline(
         ingestion_id=ingestion_id,
         replace_existing=replace_existing,
     )
+    OBSERVABILITY.update_document_graph_summary(merged_graph, count_created=True)
     _write_json(artifact_dir, "merged_document_graph.json", model_dump_compat(merged_graph))
     _write_json(artifact_dir, "neo4j_document_payload.json", model_dump_compat(merged_graph))
 
@@ -1622,6 +1649,7 @@ def run_document_ingestion_pipeline(
         overlap_pages=DOCUMENT_PART_OVERLAP_PAGES,
         artifacts_path=str(artifact_dir).replace("\\", "/"),
     )
+    OBSERVABILITY.record_document_ingest_completed(True)
 
     return {
         "ingestion_id": ingestion_id,
@@ -1751,7 +1779,7 @@ def health_neo4j():
 @app.get("/metrics")
 def metrics():
     log_event("info", "metrics_requested")
-    payload, content_type = OBSERVABILITY.render_metrics(get_environment())
+    payload, content_type = OBSERVABILITY.render_metrics(get_environment(), get_deployment_info())
     return Response(content=payload, media_type=content_type)
 
 
@@ -1977,6 +2005,7 @@ def document_ingest(
         },
         daemon=True,
     )
+    OBSERVABILITY.record_document_ingest_accepted()
     thread.start()
 
     return success_response(

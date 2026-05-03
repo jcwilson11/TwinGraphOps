@@ -129,6 +129,9 @@ class TwinGraphOpsApiTests(unittest.TestCase):
             'twingraphops_http_requests_total{method="GET",path="/health",status="200"} 1.0',
             metrics_payload,
         )
+        self.assertIn('twingraphops_http_request_duration_seconds_bucket{le="+Inf",method="GET",path="/",status="200"} 1.0', metrics_payload)
+        self.assertIn("twingraphops_deployment_info", metrics_payload)
+        self.assertIn('twingraphops_devsecops_control_info{control="filesystem_vulnerability_scan"', metrics_payload)
         self.assertIn(f'twingraphops_environment_info{{environment="{main.get_environment()}"}} 1.0', metrics_payload)
 
     def test_ready_failure_updates_dependency_and_error_metrics(self):
@@ -221,6 +224,14 @@ class TwinGraphOpsApiTests(unittest.TestCase):
             self.assertTrue((Path(payload["artifacts_path"]) / "chunks" / "chunking_meta.txt").exists())
 
         persist_graph.assert_called_once()
+        metrics_payload = self._metrics_text()
+        self.assertIn('twingraphops_document_ingest_jobs_total{state="accepted"} 1.0', metrics_payload)
+        self.assertIn('twingraphops_document_ingest_jobs_total{state="running"} 1.0', metrics_payload)
+        self.assertIn('twingraphops_document_ingest_jobs_total{state="succeeded"} 1.0', metrics_payload)
+        self.assertIn("twingraphops_document_ingest_chunks_total 1.0", metrics_payload)
+        self.assertIn("twingraphops_document_graph_nodes_current 1.0", metrics_payload)
+        self.assertIn("twingraphops_document_graph_evidence_items_current 1.0", metrics_payload)
+        self.assertIn('twingraphops_document_graph_node_kind_current{kind="requirement"} 1.0', metrics_payload)
 
     def test_document_ingest_accepts_pdf_and_runs_conversion(self):
         chunk_graph = DocumentChunkGraph(
@@ -295,6 +306,10 @@ class TwinGraphOpsApiTests(unittest.TestCase):
             self.assertEqual(response.json()["error"]["code"], "pdf_page_markers_missing")
 
         persist_graph.assert_not_called()
+        metrics_payload = self._metrics_text()
+        self.assertIn('twingraphops_document_ingest_jobs_total{state="failed"} 1.0', metrics_payload)
+        self.assertIn('twingraphops_document_ingest_failures_total{code="pdf_page_markers_missing"} 1.0', metrics_payload)
+        self.assertIn('twingraphops_document_page_marker_failures_total{code="pdf_page_markers_missing"} 1.0', metrics_payload)
 
     def test_document_ingest_rejects_unsupported_extension(self):
         response = self.client.post(

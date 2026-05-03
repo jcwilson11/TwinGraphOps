@@ -138,7 +138,9 @@ The API exposes Prometheus counters, histograms, and gauges for:
 - Neo4j dependency health and health-check latency
 - Gemini request attempts, retries, timeouts, failures, and latency
 - ingestion document counts, chunk counts, and failure counts
+- async document knowledge graph job state, PDF conversion/page-marker failures, document graph size, evidence counts, node kinds, and relation types
 - graph node totals, edge totals, average risk, and risk bucket counts
+- deployment identity and configured DevSecOps control evidence
 
 The frontend exposes:
 
@@ -150,8 +152,9 @@ The frontend exposes:
 Grafana is provisioned with starter dashboards for:
 
 - platform overview
-- ingestion pipeline
-- twin risk summary
+- document knowledge graph ingestion
+- legacy component risk summary
+- DevSecOps evidence
 
 ### Logs
 

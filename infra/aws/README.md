@@ -48,7 +48,7 @@ aws cloudformation deploy \
 Important notes:
 
 - use a public subnet with outbound internet access
-- `t3.medium` is the default because Neo4j is more comfortable there than on a tiny instance
+- `t3.micro` is the default and the intended demo size for this AWS account; keep document uploads small and watch memory/disk pressure because Neo4j, Prometheus, Grafana, and PDF/document ingestion all share the same host
 - the stack only opens port `80`
 - the instance reads the secret and Gemini model parameter directly, so the EC2 role only needs read access to that one secret, `/twingraphops/production/gemini_model`, and ECR
 - the EC2 bootstrap installs Docker from Amazon Linux 2023 and installs Docker Compose as a CLI plugin
@@ -118,3 +118,13 @@ Use the EC2 public DNS name or public IP from the CloudFormation outputs:
 - `http://<public-host>/api/metrics`
 - `http://<public-host>/grafana/`
 - `http://<public-host>/grafana/api/health`
+
+AWS console checks for the DevSecOps evidence package:
+
+- EC2 instance state is `running`, status checks are `2/2`, the instance type matches the intended demo size, disk space is healthy, and the SSM agent is online.
+- The security group exposes only port `80` publicly unless another port was intentionally approved; Neo4j, Prometheus, Grafana internals, frontend, and API container ports should stay behind nginx.
+- The CloudFormation stack has the expected outputs and no unexpected drift.
+- ECR has the expected `sha-<commit>` API/frontend images, release aliases, digest refs, and acceptable vulnerability scan findings.
+- Secrets Manager contains real production values for `neo4j_user`, `neo4j_password`, `gemini_api_key`, `grafana_admin_user`, and `grafana_admin_password`.
+- Systems Manager Parameter Store contains `/twingraphops/production/gemini_model` in the deployment region.
+- Prometheus targets are up and the Grafana dashboards have non-empty platform, document KG ingestion, legacy risk, and DevSecOps evidence panels after a smoke upload.

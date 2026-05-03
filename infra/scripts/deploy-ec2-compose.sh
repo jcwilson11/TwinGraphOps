@@ -94,6 +94,7 @@ PY
   printf 'API_IMAGE=%s\n' "$API_IMAGE"
   printf 'FRONTEND_IMAGE=%s\n' "$FRONTEND_IMAGE"
   printf 'PUBLIC_API_BASE_URL=%s\n' "$PUBLIC_API_BASE_URL"
+  printf 'TWIN_RELEASE_SHA=%s\n' "${RELEASE_SHA:-unknown}"
   if [[ -n "$GEMINI_MODEL" ]]; then
     printf 'GEMINI_MODEL=%s\n' "$GEMINI_MODEL"
   fi

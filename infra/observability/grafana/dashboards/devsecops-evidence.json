@@ -52,7 +52,7 @@
           "refId": "A"
         }
       ],
-      "title": "API Up",
+      "title": "API Scrape Gate",
       "type": "stat"
     },
     {
@@ -102,7 +102,7 @@
           "refId": "A"
         }
       ],
-      "title": "Frontend Up",
+      "title": "Frontend Scrape Gate",
       "type": "stat"
     },
     {
@@ -152,7 +152,7 @@
           "refId": "A"
         }
       ],
-      "title": "Neo4j Ready",
+      "title": "Neo4j Readiness Gate",
       "type": "stat"
     },
     {
@@ -202,7 +202,7 @@
           "refId": "A"
         }
       ],
-      "title": "Prometheus Up",
+      "title": "Prometheus Gate",
       "type": "stat"
     },
     {
@@ -210,285 +210,13 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "reqps"
-        },
-        "overrides": []
-      },
       "gridPos": {
-        "h": 4,
-        "w": 6,
+        "h": 8,
+        "w": 12,
         "x": 0,
         "y": 4
       },
       "id": 5,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        }
-      },
-      "targets": [
-        {
-          "expr": "sum(rate(twingraphops_http_requests_total[5m]))",
-          "refId": "A"
-        }
-      ],
-      "title": "API Request Rate",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 6,
-        "y": 4
-      },
-      "id": 6,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        }
-      },
-      "targets": [
-        {
-          "expr": "twingraphops_http_in_flight_requests",
-          "refId": "A"
-        }
-      ],
-      "title": "API In Flight",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 12,
-        "y": 4
-      },
-      "id": 7,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        }
-      },
-      "targets": [
-        {
-          "expr": "twingraphops_frontend_in_flight_requests",
-          "refId": "A"
-        }
-      ],
-      "title": "Frontend In Flight",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 18,
-        "y": 4
-      },
-      "id": 8,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        }
-      },
-      "targets": [
-        {
-          "expr": "twingraphops_frontend_uptime_seconds",
-          "refId": "A"
-        }
-      ],
-      "title": "Frontend Uptime",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 8
-      },
-      "id": 9,
-      "targets": [
-        {
-          "expr": "sum by (status) (rate(twingraphops_http_requests_total[5m]))",
-          "legendFormat": "api {{status}}",
-          "refId": "A"
-        },
-        {
-          "expr": "sum by (status) (rate(twingraphops_frontend_requests_total[5m]))",
-          "legendFormat": "frontend {{status}}",
-          "refId": "B"
-        }
-      ],
-      "title": "Request Rate By Status",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 8
-      },
-      "id": 10,
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(twingraphops_http_request_duration_seconds_bucket[5m])))",
-          "legendFormat": "p50",
-          "refId": "A"
-        },
-        {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(twingraphops_http_request_duration_seconds_bucket[5m])))",
-          "legendFormat": "p95",
-          "refId": "B"
-        }
-      ],
-      "title": "API Latency",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 16
-      },
-      "id": 11,
-      "targets": [
-        {
-          "expr": "sum by (path, status) (rate(twingraphops_http_requests_total[5m]))",
-          "legendFormat": "{{path}} {{status}}",
-          "refId": "A"
-        }
-      ],
-      "title": "API Endpoint Traffic",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 16
-      },
-      "id": 12,
-      "targets": [
-        {
-          "expr": "sum by (path, status) (rate(twingraphops_frontend_requests_total[5m]))",
-          "legendFormat": "{{path}} {{status}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Frontend Route Traffic",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 24
-      },
-      "id": 13,
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(twingraphops_neo4j_operation_duration_seconds_bucket[5m])))",
-          "legendFormat": "neo4j p95",
-          "refId": "A"
-        }
-      ],
-      "title": "Neo4j Healthcheck Latency",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 24
-      },
-      "id": 14,
       "targets": [
         {
           "expr": "twingraphops_deployment_info",
@@ -497,25 +225,131 @@
           "refId": "A"
         }
       ],
-      "title": "Deployment Identity",
+      "title": "Deployed Commit And Images",
       "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "id": 6,
+      "targets": [
+        {
+          "expr": "twingraphops_environment_info",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        },
+        {
+          "expr": "twingraphops_frontend_environment_info",
+          "format": "table",
+          "instant": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Runtime Environment",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "id": 7,
+      "targets": [
+        {
+          "expr": "twingraphops_devsecops_control_info",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Configured DevSecOps Controls",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "id": 8,
+      "targets": [
+        {
+          "expr": "sum(rate(twingraphops_http_requests_total{status=~\"5..\"}[5m]))",
+          "legendFormat": "api 5xx",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(twingraphops_frontend_requests_total{status=~\"5..\"}[5m]))",
+          "legendFormat": "frontend 5xx",
+          "refId": "B"
+        }
+      ],
+      "title": "Runtime Error Gates",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      },
+      "id": 9,
+      "targets": [
+        {
+          "expr": "sum by (code) (increase(twingraphops_document_ingest_failures_total[24h]))",
+          "legendFormat": "document {{code}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (code) (increase(twingraphops_ingest_failures_total[24h]))",
+          "legendFormat": "legacy {{code}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Ingestion Failure Evidence",
+      "type": "timeseries"
     }
   ],
   "schemaVersion": 39,
   "style": "dark",
   "tags": [
     "twingraphops",
-    "platform",
-    "devsecops"
+    "devsecops",
+    "evidence"
   ],
   "templating": {
     "list": []
   },
   "time": {
-    "from": "now-6h",
+    "from": "now-24h",
     "to": "now"
   },
-  "title": "TwinGraphOps Platform Overview",
-  "uid": "tgo-platform-overview",
-  "version": 2
+  "title": "TwinGraphOps DevSecOps Evidence",
+  "uid": "tgo-devsecops-evidence",
+  "version": 1
 }
