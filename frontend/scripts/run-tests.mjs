@@ -42,6 +42,7 @@ if (testFiles.length === 0) {
 
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
+fs.copyFileSync(path.join(testsDir, 'runtime-globals.mjs'), path.join(outDir, 'runtime-globals.mjs'));
 
 for (const testFile of testFiles) {
   const relativePath = path.relative(testsDir, testFile);
@@ -53,6 +54,7 @@ for (const testFile of testFiles) {
     outdir: outDir,
     bundle: shouldBundle,
     format: 'esm',
+    banner: shouldBundle ? { js: "import './runtime-globals.mjs';" } : undefined,
     outExtension: {
       '.js': '.mjs',
     },

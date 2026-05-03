@@ -60,6 +60,9 @@ if not neo4j_password:
 if not gemini_api_key:
     raise SystemExit("The secret must contain gemini_api_key (or GEMINI_API_KEY).")
 
+if gemini_api_key in {"replace-me", "replace-with-real-api-key"}:
+    raise SystemExit("The production Gemini API key is still a placeholder.")
+
 if not grafana_admin_user:
     raise SystemExit("The secret must contain grafana_admin_user (or GRAFANA_ADMIN_USER).")
 

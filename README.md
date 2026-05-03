@@ -32,8 +32,9 @@ flowchart LR
     Developer --> GitHubActions
     GitHubActions --> SecurityScans
     GitHubActions --> BuildSmoke
+    BuildSmoke --> PromotionConfig
     BuildSmoke --> StagingPromotion
-    StagingPromotion --> ProductionPromotion
+    BuildSmoke --> ProductionPromotion
 ```
 
 ## DevSecOps Pipeline Summary
@@ -44,21 +45,22 @@ The repository uses GitHub Actions to model a deployment pipeline:
 2. CI runs Python unit tests for the API and a dedicated frontend test suite.
 3. CI performs a local Docker Compose build and smoke test for source validation.
 4. Pushes to `twin-*` build the local `api` and `frontend` Docker images and run Trivy image scans against those local tags before smoke tests.
-5. Pushes to `main` and `dev` also build `api` and `frontend` once, publish them to Amazon ECR with immutable `sha-<commit>` tags, and capture the resulting digest refs.
-6. CI verifies:
+5. CI verifies:
    - API liveness: `/health`
    - API readiness: `/ready`
    - API metrics: `/metrics`
    - frontend health: `/healthz`
+6. Pull requests on the supported promotion paths validate the staging or production Compose config in one stable PR promotion check.
 7. Security workflows run separately for:
    - secret scanning with Gitleaks
    - static analysis with CodeQL
    - filesystem vulnerability scanning with Trivy
-8. Pushes to `main` and `dev` run Trivy image scans against the exact published digest refs after the publish step completes.
-9. Pushes to `dev` run a **staging-like promotion** job using those same digest refs.
-10. Pushes to `main` run a **production-like promotion** job gated by the GitHub `production` environment, again using those same digest refs.
+8. Pushes to `main` and `dev` wait for the common CI gate, then publish `api` and `frontend` images to Amazon ECR with immutable `sha-<commit>` tags and capture the resulting digest refs.
+9. Pushes to `main` and `dev` run Trivy image scans against the exact published digest refs after the publish step completes.
+10. Pushes to `dev` run a **staging-like promotion** workflow using those same digest refs.
+11. Pushes to `main` run a **production-like promotion** workflow gated by the GitHub `production` environment, again using those same digest refs.
 
-GitHub branch protection is designed to mark the CI, Trivy, Gitleaks, and CodeQL workflows as required checks so the separate security workflows act as promotion gates.
+GitHub branch protection is designed to mark the CI, Trivy, Gitleaks, CodeQL, and optionally PR Promotion Config workflows as required checks. Push-only promotion workflows are post-merge evidence and should not be required PR checks.
 
 ## Environment Model
 
@@ -68,7 +70,7 @@ The project uses the same container topology across local development, CI valida
 | --- | --- | --- |
 | `local` | developer workstation | `docker compose up --build` |
 | `ci` | automated verification | GitHub Actions local validation plus exact-image smoke test |
-| `staging` | pre-release promotion | `deploy-staging` workflow job |
+| `staging` | pre-release promotion | `TwinGraphOps Promote Dev` workflow |
 | `production` | real cloud runtime | EC2 + Docker Compose + ECR + SSM |
 
 The `TWIN_ENV` variable is injected into the services so environment state is visible in health responses and metrics.
@@ -82,7 +84,7 @@ This project treats security as part of delivery, adopting the DevSecOps mindset
 | Secret detection | `secret-scan.yml` with Gitleaks | Prevent accidental credential commits |
 | Static analysis | `codeql.yml` | Detect common code-level security issues |
 | Filesystem vulnerability scanning | `trivy.yml` | Detect vulnerable packages in the source tree |
-| Local and published image scanning | `.github/workflows/ci.yml` with Trivy | Scan local `twin-*` image builds before promotion and scan exact digest refs on `main`/`dev` |
+| Local and published image scanning | `.github/workflows/ci.yml`, `.github/workflows/promote-dev.yml`, `.github/workflows/promote-main.yml` with Trivy | Scan local `twin-*` image builds before promotion and scan exact digest refs on `main`/`dev` |
 | Secret isolation | `infra/secrets/*.txt` ignored in git | Keep operational credentials out of version control |
 | Environment-based secrets | AWS Secrets Manager plus GitHub Actions OIDC | Keep GitHub out of long-lived secret storage while separating environments |
 
@@ -97,7 +99,10 @@ Confidentiality, integrity, and availability are addressed in a class-project fo
 This repo demonstrates the infrastructure-as-code mindset through committed delivery artifacts:
 
 - `docker-compose.yml`: runtime topology, secrets, health checks
-- `.github/workflows/ci.yml`: build, test, smoke, staging, production-like promotion
+- `.github/workflows/ci.yml`: build, test, and smoke validation
+- `.github/workflows/pr-promotion-config.yml`: PR staging and production config validation
+- `.github/workflows/promote-dev.yml`: staging-like post-merge promotion
+- `.github/workflows/promote-main.yml`: production-like post-merge promotion
 - `.github/workflows/trivy.yml`: vulnerability scanning
 - `.github/workflows/secret-scan.yml`: secret scanning
 - `.github/workflows/codeql.yml`: static analysis
@@ -138,7 +143,9 @@ The API exposes Prometheus counters, histograms, and gauges for:
 - Neo4j dependency health and health-check latency
 - Gemini request attempts, retries, timeouts, failures, and latency
 - ingestion document counts, chunk counts, and failure counts
+- async document knowledge graph job state, PDF conversion/page-marker failures, document graph size, evidence counts, node kinds, and relation types
 - graph node totals, edge totals, average risk, and risk bucket counts
+- deployment identity and configured DevSecOps control evidence
 
 The frontend exposes:
 
@@ -150,8 +157,9 @@ The frontend exposes:
 Grafana is provisioned with starter dashboards for:
 
 - platform overview
-- ingestion pipeline
-- twin risk summary
+- document knowledge graph ingestion
+- legacy component risk summary
+- DevSecOps evidence
 
 ### Logs
 
@@ -241,7 +249,11 @@ Grafana now uses the secret-backed admin credentials from your local bootstrap o
 
 The ingest pipeline accepts structured `.md` or `.txt` system manuals, chunks them, sends each chunk to Gemini for graph extraction, validates the JSON, writes the merged graph to Neo4j, and stores artifacts under `runtime/artifacts/`.
 
-By default, each Gemini request is bounded by `GEMINI_TIMEOUT_MS=30000` inside the API so a blocked upstream call fails closed instead of leaving `/ingest` pending indefinitely.
+By default, each Gemini request is bounded by `GEMINI_TIMEOUT_MS=300000` inside the API so a blocked upstream call fails closed instead of leaving `/ingest` pending indefinitely.
+
+That timeout is applied per Gemini request, not across the full ingest job. Because the backend sends one Gemini request per chunk, a 12-chunk upload can run much longer than 5 minutes overall as long as each individual request returns before its own timeout expires.
+
+The document workspace now uses an async submit-and-poll flow: `POST /document/ingest` returns quickly with an `ingestion_id`, then the frontend polls `/document/ingest/{ingestion_id}/events` until the background job succeeds or fails before loading the document graph.
 
 For larger manuals on a student/free-tier Gemini quota, the default runtime tuning now favors fewer timeouts without exploding request count:
 
@@ -300,7 +312,7 @@ The tests cover:
 TwinGraphOps now has a real production deployment path that builds directly on the localhost container model:
 
 - localhost and CI keep using the existing Compose stack for fast validation
-- pushes to `main` and `dev` publish immutable `sha-<commit>` images to Amazon ECR after local validation
+- pushes to `main` and `dev` run dedicated promotion workflows that publish immutable `sha-<commit>` images to Amazon ECR after the common CI gate passes
 - tagged releases resolve those previously published digest refs instead of rebuilding from source
 - AWS Systems Manager tells the production EC2 host to pull those exact digest refs and restart `docker-compose.cloud.yml`
 - the EC2 host loads Neo4j, Gemini, and Grafana credentials from AWS Secrets Manager at deploy time
@@ -308,15 +320,27 @@ TwinGraphOps now has a real production deployment path that builds directly on t
 
 The production runtime is intentionally simple and budget-aware: one EC2 instance runs `nginx`, `frontend`, `api`, `neo4j`, `prometheus`, and `grafana`, which keeps the first cloud release inside a small-credit footprint while still being a real AWS deployment.
 
+### PR promotion config validation
+
+The `PR Promotion Config` workflow keeps pull request checks clean while preserving promotion-path validation:
+
+- `twin-* -> dev` validates the staging Compose config with placeholder secrets
+- `dev -> main` validates the production Compose config with placeholder secrets
+- other PR shapes pass with an explicit "not a promotion path" message
+
 ### Staging-like promotion
 
-The `deploy-staging` job:
+The `TwinGraphOps Promote Dev` workflow waits for the common CI gate, then publishes digest-pinned images and runs the `deploy-staging` job:
 
 - uses GitHub Actions OIDC to assume an AWS role
 - pulls the staging secret from AWS Secrets Manager into `infra/secrets/*.txt`
 - starts the Compose stack with `TWIN_ENV=staging`
 - verifies liveness, readiness, frontend health, metrics, and Grafana health
 - records evidence in workflow logs
+
+### Production-like promotion
+
+The `TwinGraphOps Promote Main` workflow waits for the common CI gate, then publishes digest-pinned images and runs the `deploy-production` simulation behind the GitHub `production` environment. The tag-driven release workflow remains the real cloud production deployment path.
 
 ### Production release
 
@@ -336,7 +360,7 @@ The `TwinGraphOps Release` workflow is triggered by a version tag such as `v1.0.
 
 ### GitHub Actions AWS configuration
 
-The CI and release workflows expect these GitHub Actions variables:
+The CI, promotion, and release workflows expect these GitHub Actions variables:
 
 - `AWS_REGION`
 - `STAGING_AWS_ROLE_ARN`
@@ -352,9 +376,9 @@ Optional release variables:
 
 The staging and production jobs use `aws-actions/configure-aws-credentials` with OIDC, then run `infra/scripts/bootstrap-secrets-from-aws.sh` to write the existing secret files consumed by Docker Compose and the API.
 
-Pushes to `twin-*` do not publish images; they only build local tags and run image vulnerability scans inside CI. Pushes to `main` and `dev` publish immutable `sha-<commit>` tags into the existing ECR repos and record the resulting digest refs in an `image-manifest` artifact.
+Pushes to `twin-*` do not publish images; they only build local tags and run image vulnerability scans inside CI. Pushes to `main` and `dev` run `TwinGraphOps Promote Main` or `TwinGraphOps Promote Dev`, wait for the common CI gate to pass for the same commit, publish immutable `sha-<commit>` tags into the existing ECR repos, and record the resulting digest refs in an `image-manifest` artifact.
 
-Because those promotable images are published into the existing production ECR repositories, the CI publish path uses `PROD_AWS_ROLE_ARN` for ECR write access. The staging deployment simulation still uses `STAGING_AWS_ROLE_ARN`, so that staging role must be able to authenticate to ECR and pull from the shared API/frontend repositories.
+Because those promotable images are published into the existing production ECR repositories, the promotion publish path uses `PROD_AWS_ROLE_ARN` for ECR write access. The staging deployment simulation still uses `STAGING_AWS_ROLE_ARN`, so that staging role must be able to authenticate to ECR and pull from the shared API/frontend repositories.
 
 At minimum, the staging role needs:
 
@@ -363,7 +387,7 @@ At minimum, the staging role needs:
 - `ecr:BatchGetImage` on the shared ECR repositories
 - `ecr:GetDownloadUrlForLayer` on the shared ECR repositories
 
-The tagged release workflow uses the same OIDC model, resolves those previously published digest refs from ECR, and deploys the production host with `infra/scripts/deploy-ec2-compose.sh` and the `docker-compose.cloud.yml` topology. A production tag is therefore the approval boundary: it must point to a commit whose CI run already published promotable images.
+The tagged release workflow uses the same OIDC model, resolves those previously published digest refs from ECR, and deploys the production host with `infra/scripts/deploy-ec2-compose.sh` and the `docker-compose.cloud.yml` topology. A production tag is therefore the approval boundary: it must point to a commit whose CI-gated promotion workflow already published promotable images.
 
 The deploy script uses `GEMINI_MODEL` if it is provided explicitly. Otherwise, it reads `/twingraphops/production/gemini_model` from AWS Systems Manager Parameter Store and writes that value into the generated cloud env file before Docker Compose restarts the API.
 
@@ -410,10 +434,12 @@ Operator follow-up stays simple:
 | --- | --- |
 | Automated CI | `.github/workflows/ci.yml` |
 | Build and smoke validation | `.github/workflows/ci.yml` |
+| Promotion config validation | `.github/workflows/pr-promotion-config.yml` |
+| Staged promotion evidence | `.github/workflows/promote-dev.yml`, `.github/workflows/promote-main.yml` |
 | Secret scanning | `.github/workflows/secret-scan.yml` |
 | Static analysis | `.github/workflows/codeql.yml` |
 | Vulnerability scanning | `.github/workflows/trivy.yml` |
-| Environment separation | `.github/workflows/ci.yml`, `docker-compose.yml` |
+| Environment separation | `.github/workflows/ci.yml`, `.github/workflows/promote-dev.yml`, `.github/workflows/promote-main.yml`, `docker-compose.yml` |
 | Secret isolation | `.gitignore`, `infra/scripts/setup-local-secrets.sh`, `infra/scripts/bootstrap-secrets-from-aws.sh` |
 | Health and readiness | `api/main.py`, `frontend/server.js` |
 | Metrics visibility | `api/main.py` |

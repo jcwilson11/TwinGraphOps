@@ -2,6 +2,7 @@ import io
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,7 +15,19 @@ import main
 from gemini_client import GeminiExtractionError
 from observability import Observability
 from graph_pipeline import build_demo_graph, compute_graph_metrics
-from models import ChunkGraph, ChunkEdge, ChunkNode, MergedGraph, model_dump_compat
+from models import (
+    ChunkGraph,
+    ChunkEdge,
+    ChunkNode,
+    DocumentChunkGraph,
+    DocumentChunkNode,
+    DocumentEvidence,
+    DocumentGraphNode,
+    DocumentMergedGraph,
+    DocumentSource,
+    MergedGraph,
+    model_dump_compat,
+)
 
 
 class FakeExtractor:
@@ -32,6 +45,22 @@ class FakeExtractor:
         return self.graph, model_dump_compat(self.graph)
 
 
+class FakeDocumentExtractor(FakeExtractor):
+    pass
+
+
+class InlineThread:
+    def __init__(self, target=None, args=(), kwargs=None, daemon=None) -> None:
+        self._target = target
+        self._args = args
+        self._kwargs = kwargs or {}
+        self.daemon = daemon
+
+    def start(self) -> None:
+        if self._target is not None:
+            self._target(*self._args, **self._kwargs)
+
+
 class TwinGraphOpsApiTests(unittest.TestCase):
     def setUp(self):
         main.OBSERVABILITY = Observability()
@@ -41,6 +70,32 @@ class TwinGraphOpsApiTests(unittest.TestCase):
         response = self.client.get("/metrics")
         self.assertEqual(response.status_code, 200)
         return response.text
+
+    def _build_document_merged_graph(self, ingestion_id: str = "doc-ingest-01") -> DocumentMergedGraph:
+        return DocumentMergedGraph(
+            ingestion_id=ingestion_id,
+            nodes=[
+                DocumentGraphNode(
+                    id="D1",
+                    label="Retention Policy",
+                    kind="requirement",
+                    canonical_name="Retention Policy",
+                    evidence=[DocumentEvidence(quote="Records are retained for 7 years.", page_start=1, page_end=1)],
+                    sources=[
+                        DocumentSource(
+                            document_name="manual.pdf",
+                            chunk_file="chunks/source_document_part_001.md",
+                            chunk_id="source_document_part_001",
+                            pdf_page_start=1,
+                            pdf_page_end=1,
+                        )
+                    ],
+                    degree=1,
+                    source="document",
+                )
+            ],
+            edges=[],
+        )
 
     def test_root_exposes_operational_routes(self):
         response = self.client.get("/")
@@ -74,6 +129,9 @@ class TwinGraphOpsApiTests(unittest.TestCase):
             'twingraphops_http_requests_total{method="GET",path="/health",status="200"} 1.0',
             metrics_payload,
         )
+        self.assertIn('twingraphops_http_request_duration_seconds_bucket{le="+Inf",method="GET",path="/",status="200"} 1.0', metrics_payload)
+        self.assertIn("twingraphops_deployment_info", metrics_payload)
+        self.assertIn('twingraphops_devsecops_control_info{control="filesystem_vulnerability_scan"', metrics_payload)
         self.assertIn(f'twingraphops_environment_info{{environment="{main.get_environment()}"}} 1.0', metrics_payload)
 
     def test_ready_failure_updates_dependency_and_error_metrics(self):
@@ -124,6 +182,219 @@ class TwinGraphOpsApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 415)
         self.assertEqual(response.json()["error"]["code"], "unsupported_file_type")
+
+    def test_document_ingest_accepts_markdown_and_persists_document_graph(self):
+        chunk_graph = DocumentChunkGraph(
+            source=DocumentSource(
+                document_name="manual.md",
+                chunk_file="chunks/source_document_part_001.md",
+                chunk_id="source_document_part_001",
+            ),
+            nodes=[
+                DocumentChunkNode(
+                    id="source_document_part_001:N1",
+                    label="Retention Policy",
+                    kind="requirement",
+                    canonical_name="Retention Policy",
+                    evidence=[DocumentEvidence(quote="Records are retained for 7 years.")],
+                )
+            ],
+            edges=[],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            main, "get_gemini_document_client", return_value=FakeDocumentExtractor(graph=chunk_graph)
+        ), patch.object(main, "persist_document_graph_to_store") as persist_graph, patch.object(
+            main, "get_artifacts_root", return_value=Path(tmpdir)
+        ), patch.object(main, "Thread", InlineThread):
+            response = self.client.post(
+                "/document/ingest",
+                files={"file": ("manual.md", io.BytesIO(b"Records are retained for 7 years."), "text/markdown")},
+                data={"ingestion_id": "doc_ingest-01"},
+            )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()["data"]
+            self.assertEqual(payload["source"], "document")
+            self.assertIsNone(payload["nodes_created"])
+            self.assertIsNone(payload["markdown_parts_created"])
+            self.assertIsNone(payload["page_markers_detected"])
+            self.assertIsNone(payload["total_pages"])
+            self.assertTrue((Path(payload["artifacts_path"]) / "merged_document_graph.json").exists())
+            self.assertTrue((Path(payload["artifacts_path"]) / "chunks" / "source_document_part_001.md").exists())
+            self.assertTrue((Path(payload["artifacts_path"]) / "chunks" / "chunking_meta.txt").exists())
+
+        persist_graph.assert_called_once()
+        metrics_payload = self._metrics_text()
+        self.assertIn('twingraphops_document_ingest_jobs_total{state="accepted"} 1.0', metrics_payload)
+        self.assertIn('twingraphops_document_ingest_jobs_total{state="running"} 1.0', metrics_payload)
+        self.assertIn('twingraphops_document_ingest_jobs_total{state="succeeded"} 1.0', metrics_payload)
+        self.assertIn("twingraphops_document_ingest_chunks_total 1.0", metrics_payload)
+        self.assertIn("twingraphops_document_graph_nodes_current 1.0", metrics_payload)
+        self.assertIn("twingraphops_document_graph_evidence_items_current 1.0", metrics_payload)
+        self.assertIn('twingraphops_document_graph_node_kind_current{kind="requirement"} 1.0', metrics_payload)
+
+    def test_document_ingest_accepts_pdf_and_runs_conversion(self):
+        chunk_graph = DocumentChunkGraph(
+            source=DocumentSource(
+                document_name="manual.pdf",
+                chunk_file="chunks/source_document_part_001.md",
+                chunk_id="source_document_part_001",
+                pdf_page_start=1,
+                pdf_page_end=1,
+            ),
+            nodes=[
+                DocumentChunkNode(
+                    id="source_document_part_001:N1",
+                    label="PDF Policy",
+                    kind="section",
+                    canonical_name="PDF Policy",
+                    evidence=[DocumentEvidence(quote="PDF policy text", page_start=1, page_end=1)],
+                )
+            ],
+            edges=[],
+        )
+        converted_markdown = "\n\n".join(
+            [
+                f"[PDF_PAGE_START={page}]\nPDF policy text page {page}\n[PDF_PAGE_END={page}]"
+                for page in range(1, 246)
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            main, "convert_pdf_bytes_to_markdown", return_value=converted_markdown
+        ) as convert_pdf, patch.object(
+            main, "get_gemini_document_client", return_value=FakeDocumentExtractor(graph=chunk_graph)
+        ), patch.object(main, "persist_document_graph_to_store"), patch.object(
+            main, "get_artifacts_root", return_value=Path(tmpdir)
+        ), patch.object(main, "Thread", InlineThread):
+            response = self.client.post(
+                "/document/ingest",
+                files={"file": ("manual.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+            )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()["data"]
+            self.assertEqual(payload["filename"], "manual.pdf")
+            self.assertIsNone(payload["chunks_total"])
+            self.assertIsNone(payload["markdown_parts_created"])
+            self.assertIsNone(payload["page_markers_detected"])
+            self.assertIsNone(payload["total_pages"])
+            self.assertTrue((Path(payload["artifacts_path"]) / "source_document.pdf").exists())
+            self.assertTrue((Path(payload["artifacts_path"]) / "source_document.md").exists())
+            part_path = Path(payload["artifacts_path"]) / "chunks" / "source_document_part_001.md"
+            last_part_path = Path(payload["artifacts_path"]) / "chunks" / "source_document_part_018.md"
+            self.assertTrue(part_path.exists())
+            self.assertTrue(part_path.read_text(encoding="utf-8").startswith("[PDF_PAGE_START=1]"))
+            self.assertTrue(last_part_path.exists())
+            self.assertIn("[PDF_PAGE_START=237]", last_part_path.read_text(encoding="utf-8"))
+
+        convert_pdf.assert_called_once()
+
+    def test_document_ingest_rejects_pdf_when_conversion_lacks_page_markers(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            main, "convert_pdf_bytes_to_markdown", return_value="# Plain converted markdown\n\nNo page markers."
+        ), patch.object(main, "get_gemini_document_client"), patch.object(
+            main, "persist_document_graph_to_store"
+        ) as persist_graph, patch.object(
+            main, "get_artifacts_root", return_value=Path(tmpdir)
+        ):
+            response = self.client.post(
+                "/document/ingest",
+                files={"file": ("manual.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+            )
+
+            self.assertEqual(response.status_code, 422)
+            self.assertEqual(response.json()["error"]["code"], "pdf_page_markers_missing")
+
+        persist_graph.assert_not_called()
+        metrics_payload = self._metrics_text()
+        self.assertIn('twingraphops_document_ingest_jobs_total{state="failed"} 1.0', metrics_payload)
+        self.assertIn('twingraphops_document_ingest_failures_total{code="pdf_page_markers_missing"} 1.0', metrics_payload)
+        self.assertIn('twingraphops_document_page_marker_failures_total{code="pdf_page_markers_missing"} 1.0', metrics_payload)
+
+    def test_document_ingest_rejects_unsupported_extension(self):
+        response = self.client.post(
+            "/document/ingest",
+            files={"file": ("image.png", io.BytesIO(b"png"), "image/png")},
+        )
+        self.assertEqual(response.status_code, 415)
+        self.assertEqual(response.json()["error"]["code"], "unsupported_file_type")
+
+    def test_active_document_artifact_manifest_returns_only_allowed_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_dir = main.get_artifact_dir("doc-ingest-01")
+            with patch.object(main, "get_artifacts_root", return_value=Path(tmpdir)):
+                artifact_dir = main.get_artifact_dir("doc-ingest-01")
+                artifact_dir.mkdir(parents=True, exist_ok=True)
+                (artifact_dir / "source_document.md").write_text("Full markdown", encoding="utf-8")
+                (artifact_dir / "merged_document_graph.json").write_text('{"nodes":[],"edges":[]}', encoding="utf-8")
+                chunks_dir = artifact_dir / "chunks"
+                chunks_dir.mkdir(parents=True, exist_ok=True)
+                (chunks_dir / "source_document_part_001.md").write_text("Chunk one", encoding="utf-8")
+                (chunks_dir / "source_document_part_001_prompt.txt").write_text("Prompt", encoding="utf-8")
+                (chunks_dir / "source_document_part_001_response.json").write_text("{}", encoding="utf-8")
+
+                with patch.object(main, "fetch_document_graph_from_store", return_value=self._build_document_merged_graph()):
+                    response = self.client.get("/document/artifacts")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()["data"]
+            self.assertEqual(payload["ingestion_id"], "doc-ingest-01")
+            self.assertEqual(
+                [artifact["filename"] for artifact in payload["artifacts"]],
+                ["source_document.md", "source_document_part_001.md", "merged_document_graph.json"],
+            )
+            self.assertEqual([artifact["type"] for artifact in payload["chunk_artifacts"]], ["chunk-markdown"])
+
+    def test_document_artifact_download_rejects_disallowed_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(main, "get_artifacts_root", return_value=Path(tmpdir)):
+            artifact_dir = main.get_artifact_dir("doc-ingest-01")
+            chunks_dir = artifact_dir / "chunks"
+            chunks_dir.mkdir(parents=True, exist_ok=True)
+            (chunks_dir / "source_document_part_001_prompt.txt").write_text("Prompt", encoding="utf-8")
+
+            response = self.client.get("/document/artifacts/doc-ingest-01/files/chunk-source_document_part_001_prompt")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], "document_artifact_not_found")
+
+    def test_document_artifact_download_serves_allowed_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(main, "get_artifacts_root", return_value=Path(tmpdir)):
+            artifact_dir = main.get_artifact_dir("doc-ingest-01")
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            (artifact_dir / "source_document.md").write_text("Full markdown", encoding="utf-8")
+
+            response = self.client.get("/document/artifacts/doc-ingest-01/files/final-markdown")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.text, "Full markdown")
+        self.assertIn('filename="source_document.md"', response.headers["content-disposition"])
+
+    def test_document_artifact_bundle_contains_only_allowed_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(main, "get_artifacts_root", return_value=Path(tmpdir)):
+            artifact_dir = main.get_artifact_dir("doc-ingest-01")
+            chunks_dir = artifact_dir / "chunks"
+            chunks_dir.mkdir(parents=True, exist_ok=True)
+            (artifact_dir / "source_document.md").write_text("Full markdown", encoding="utf-8")
+            (artifact_dir / "merged_document_graph.json").write_text('{"nodes":[],"edges":[]}', encoding="utf-8")
+            (chunks_dir / "source_document_part_001.md").write_text("Chunk one", encoding="utf-8")
+            (chunks_dir / "source_document_part_001_prompt.txt").write_text("Prompt", encoding="utf-8")
+
+            response = self.client.get("/document/artifacts/doc-ingest-01/bundle")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "application/zip")
+        archive = zipfile.ZipFile(io.BytesIO(response.content))
+        self.assertEqual(
+            sorted(archive.namelist()),
+            ["chunks/source_document_part_001.md", "merged_document_graph.json", "source_document.md"],
+        )
+
+    def test_document_graph_response_includes_active_ingestion_id(self):
+        with patch.object(main, "fetch_document_graph_from_store", return_value=self._build_document_merged_graph("doc-ingest-77")):
+            response = self.client.get("/document/graph")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["ingestion_id"], "doc-ingest-77")
 
     def test_ingest_rejects_empty_upload(self):
         response = self.client.post(

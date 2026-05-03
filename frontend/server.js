@@ -10,7 +10,7 @@ function readConfig(overrides = {}) {
   const apiBaseUrl =
     overrides.apiBaseUrl || process.env.PUBLIC_API_BASE_URL || process.env.VITE_API_BASE_URL || 'http://api:8000';
   const maxUploadMb = Number(
-    overrides.maxUploadMb || process.env.PUBLIC_MAX_UPLOAD_MB || process.env.VITE_MAX_UPLOAD_MB || 10
+    overrides.maxUploadMb || process.env.PUBLIC_MAX_UPLOAD_MB || process.env.VITE_MAX_UPLOAD_MB || 50
   );
   const processingTimeoutMs = Number(
     overrides.processingTimeoutMs || process.env.PUBLIC_PROCESSING_TIMEOUT_MS || process.env.VITE_PROCESSING_TIMEOUT_MS || 300000
@@ -51,6 +51,9 @@ function classifyPath(requestPath) {
   }
   if (/^\/api\/ingest\/[^/]+\/events$/.test(requestPath)) {
     return '/api/ingest/:ingestionId/events';
+  }
+  if (/^\/api\/document\/ingest\/[^/]+\/events$/.test(requestPath)) {
+    return '/api/document/ingest/:ingestionId/events';
   }
   if (requestPath.startsWith('/assets/')) {
     return '/assets/*';
@@ -222,6 +225,32 @@ function createApp(options = {}) {
     }
   }
 
+  async function proxy(res, method, targetUrl) {
+    try {
+      const response = await fetchImpl(targetUrl, {
+        method,
+      });
+
+      res.statusCode = response.status;
+      response.headers.forEach((value, key) => {
+        if (key.toLowerCase() === 'transfer-encoding') {
+          return;
+        }
+        res.setHeader(key, value);
+      });
+
+      if (!response.body) {
+        res.end();
+        return;
+      }
+
+      const bodyBuffer = Buffer.from(await response.arrayBuffer());
+      res.end(bodyBuffer);
+    } catch (error) {
+      sendProxyFailure(res, error);
+    }
+  }
+
   function sendMissingBuildResponse(res) {
     sendText(
       res,
@@ -327,6 +356,31 @@ function createApp(options = {}) {
         return;
       }
 
+      if (req.method === 'POST' && pathname === '/api/document/ingest') {
+        try {
+          const body = await readRequestBody(req);
+          const response = await fetchImpl(`${config.apiBaseUrl}/document/ingest`, {
+            method: 'POST',
+            headers: {
+              'content-type': req.headers['content-type'] || '',
+              Accept: 'application/json',
+            },
+            body,
+          });
+
+          const text = await response.text();
+          sendText(
+            res,
+            response.status,
+            text,
+            response.headers.get('content-type') || 'application/json; charset=utf-8'
+          );
+        } catch (error) {
+          sendProxyFailure(res, error);
+        }
+        return;
+      }
+
       const processingEventsMatch =
         req.method === 'GET' ? pathname.match(/^\/api\/ingest\/([^/]+)\/events$/) : null;
       if (processingEventsMatch) {
@@ -339,8 +393,67 @@ function createApp(options = {}) {
         return;
       }
 
+      const documentProcessingEventsMatch =
+        req.method === 'GET' ? pathname.match(/^\/api\/document\/ingest\/([^/]+)\/events$/) : null;
+      if (documentProcessingEventsMatch) {
+        const ingestionId = documentProcessingEventsMatch[1];
+        await proxyJson(
+          res,
+          'GET',
+          `${config.apiBaseUrl}/document/ingest/${encodeURIComponent(ingestionId)}/events${search}`
+        );
+        return;
+      }
+
       if (req.method === 'GET' && pathname === '/api/graph') {
         await proxyJson(res, 'GET', `${config.apiBaseUrl}/graph${search}`);
+        return;
+      }
+
+      if (req.method === 'GET' && pathname === '/api/document/graph') {
+        await proxyJson(res, 'GET', `${config.apiBaseUrl}/document/graph${search}`);
+        return;
+      }
+
+      if (req.method === 'GET' && pathname === '/api/document/artifacts') {
+        await proxyJson(res, 'GET', `${config.apiBaseUrl}/document/artifacts${search}`);
+        return;
+      }
+
+      const documentArtifactsMatch =
+        req.method === 'GET' ? pathname.match(/^\/api\/document\/artifacts\/([^/]+)$/) : null;
+      if (documentArtifactsMatch) {
+        const ingestionId = documentArtifactsMatch[1];
+        await proxyJson(
+          res,
+          'GET',
+          `${config.apiBaseUrl}/document/artifacts/${encodeURIComponent(ingestionId)}${search}`
+        );
+        return;
+      }
+
+      const documentArtifactFileMatch =
+        req.method === 'GET' ? pathname.match(/^\/api\/document\/artifacts\/([^/]+)\/files\/([^/]+)$/) : null;
+      if (documentArtifactFileMatch) {
+        const ingestionId = documentArtifactFileMatch[1];
+        const artifactId = documentArtifactFileMatch[2];
+        await proxy(
+          res,
+          'GET',
+          `${config.apiBaseUrl}/document/artifacts/${encodeURIComponent(ingestionId)}/files/${encodeURIComponent(artifactId)}${search}`
+        );
+        return;
+      }
+
+      const documentArtifactBundleMatch =
+        req.method === 'GET' ? pathname.match(/^\/api\/document\/artifacts\/([^/]+)\/bundle$/) : null;
+      if (documentArtifactBundleMatch) {
+        const ingestionId = documentArtifactBundleMatch[1];
+        await proxy(
+          res,
+          'GET',
+          `${config.apiBaseUrl}/document/artifacts/${encodeURIComponent(ingestionId)}/bundle${search}`
+        );
         return;
       }
 

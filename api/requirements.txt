@@ -6,3 +6,5 @@ networkx
 python-multipart
 httpx
 prometheus-client
+pymupdf
+pymupdf4llm

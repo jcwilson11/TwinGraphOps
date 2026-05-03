@@ -26,6 +26,21 @@ export interface IngestResponse {
   risk_nodes_scored: number;
 }
 
+export interface DocumentIngestResponse {
+  ingestion_id: string;
+  filename: string;
+  source: string;
+  chunks_total: number | null;
+  markdown_parts_created: number | null;
+  page_markers_detected: boolean | null;
+  total_pages: number | null;
+  artifacts_path: string;
+  replaced_existing: boolean;
+  nodes_created: number | null;
+  edges_created: number | null;
+  evidence_items: number | null;
+}
+
 export interface ProcessingEvent {
   timestamp: string | null;
   level: string | null;
@@ -75,6 +90,34 @@ export interface ApiGraphData {
   edges: ApiGraphEdge[];
 }
 
+export interface ApiMergedGraphNode {
+  id: string;
+  name: string;
+  type: string;
+  description: string;
+  risk_score: number;
+  risk_level: string;
+  degree: number;
+  betweenness: number;
+  closeness: number;
+  blast_radius: number;
+  dependency_span: number;
+  risk_explanation: string;
+  source: string;
+}
+
+export interface ApiMergedGraphEdge {
+  source: string;
+  target: string;
+  relation: string;
+  rationale: string;
+}
+
+export interface ApiMergedGraphData {
+  nodes: ApiMergedGraphNode[];
+  edges: ApiMergedGraphEdge[];
+}
+
 export interface RiskResponse {
   component_id: string;
   score: number;
@@ -87,4 +130,69 @@ export interface ImpactResponse {
   component_id: string;
   impacted_components: string[];
   impact_count: number;
+}
+
+export interface ApiDocumentEvidence {
+  quote: string;
+  page_start: number | null;
+  page_end: number | null;
+}
+
+export interface ApiDocumentSource {
+  document_name: string;
+  chunk_file: string;
+  chunk_id: string;
+  pdf_page_start: number | null;
+  pdf_page_end: number | null;
+}
+
+export interface ApiDocumentNode {
+  id: string;
+  label: string;
+  kind: string;
+  canonical_name: string;
+  aliases: string[];
+  summary: string;
+  evidence: ApiDocumentEvidence[];
+  sources: ApiDocumentSource[];
+  degree: number;
+  source: string;
+}
+
+export interface ApiDocumentEdge {
+  id: string;
+  source: string;
+  target: string;
+  type: string;
+  summary: string;
+  evidence: ApiDocumentEvidence[];
+  source_chunk: ApiDocumentSource | null;
+}
+
+export interface ApiDocumentGraphData {
+  source: string;
+  ingestion_id: string | null;
+  nodes: ApiDocumentNode[];
+  edges: ApiDocumentEdge[];
+}
+
+export interface DocumentArtifactEntry {
+  id: string;
+  type: 'final-markdown' | 'merged-json' | 'chunk-markdown';
+  filename: string;
+  relative_path: string;
+  size_bytes: number;
+  download_url: string;
+}
+
+export interface DocumentArtifactBundle {
+  filename: string;
+  download_url: string;
+}
+
+export interface DocumentArtifactManifest {
+  ingestion_id: string;
+  bundle: DocumentArtifactBundle;
+  artifacts: DocumentArtifactEntry[];
+  chunk_artifacts: DocumentArtifactEntry[];
 }

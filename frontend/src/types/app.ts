@@ -1,4 +1,11 @@
-import type { IngestResponse, ProcessingStatus } from './api';
+import type {
+  ApiDocumentGraphData,
+  ApiMergedGraphData,
+  DocumentArtifactManifest,
+  DocumentIngestResponse,
+  IngestResponse,
+  ProcessingStatus,
+} from './api';
 
 export type UploadPhase =
   | 'idle'
@@ -104,4 +111,94 @@ export interface GraphState {
   data: GraphData | null;
   error: string | null;
   lastLoadedAt: number | null;
+}
+
+export interface UploadedGraphUploadState {
+  phase: UploadPhase;
+  selectedFile: File | null;
+  error: string | null;
+  statusMessage: string;
+}
+
+export type UploadedArtifactKind = 'operational' | 'document';
+
+export interface UploadedGraphState {
+  status: LoadStatus;
+  kind: UploadedArtifactKind | null;
+  operationalData: GraphData | null;
+  documentData: DocumentGraphData | null;
+  error: string | null;
+  lastLoadedAt: number | null;
+  filename: string | null;
+  rawData: ApiMergedGraphData | ApiDocumentGraphData | null;
+}
+
+export interface DocumentEvidence {
+  quote: string;
+  pageStart: number | null;
+  pageEnd: number | null;
+}
+
+export interface DocumentSource {
+  documentName: string;
+  chunkFile: string;
+  chunkId: string;
+  pdfPageStart: number | null;
+  pdfPageEnd: number | null;
+}
+
+export interface DocumentNode {
+  id: string;
+  label: string;
+  kind: string;
+  canonicalName: string;
+  aliases: string[];
+  summary: string;
+  evidence: DocumentEvidence[];
+  sources: DocumentSource[];
+  degree: number;
+  source: string;
+  val: number;
+}
+
+export interface DocumentEdge {
+  id: string;
+  source: string | GraphLinkEndpointRef;
+  target: string | GraphLinkEndpointRef;
+  type: string;
+  summary: string;
+  evidence: DocumentEvidence[];
+  sourceChunk: DocumentSource | null;
+}
+
+export interface DocumentGraphData {
+  source: string;
+  ingestionId: string | null;
+  nodes: DocumentNode[];
+  links: DocumentEdge[];
+  nodeIndex: Record<string, DocumentNode>;
+  kindTypes: string[];
+  relationTypes: string[];
+}
+
+export interface DocumentUploadState {
+  phase: UploadPhase;
+  selectedFile: File | null;
+  error: string | null;
+  statusMessage: string;
+  ingestionId: string | null;
+  ingestion: DocumentIngestResponse | null;
+  processingStatus: ProcessingStatus | null;
+  startedAt: number | null;
+  completedAt: number | null;
+  retryCount: number;
+}
+
+export interface DocumentGraphState {
+  status: LoadStatus;
+  data: DocumentGraphData | null;
+  error: string | null;
+  lastLoadedAt: number | null;
+  artifacts: DocumentArtifactManifest | null;
+  artifactsError: string | null;
 }

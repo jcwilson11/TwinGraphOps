@@ -1,0 +1,495 @@
+name: TwinGraphOps Promote Dev
+
+on:
+  push:
+    branches: ["dev"]
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  API_ECR_REPOSITORY: ${{ vars.PROD_API_ECR_REPOSITORY || 'twingraphops-api' }}
+  FRONTEND_ECR_REPOSITORY: ${{ vars.PROD_FRONTEND_ECR_REPOSITORY || 'twingraphops-frontend' }}
+  PROMOTED_SHA: ${{ github.sha }}
+
+jobs:
+  source-ci-gate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Wait for common CI gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api_url="${GITHUB_API_URL:-https://api.github.com}/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs"
+
+          for i in {1..90}; do
+            curl -fsSL \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "${api_url}?branch=${GITHUB_REF_NAME}&event=push&head_sha=${PROMOTED_SHA}&per_page=5" \
+              -o /tmp/twingraphops-ci-runs.json
+
+            result="$(python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          runs = json.loads(Path("/tmp/twingraphops-ci-runs.json").read_text()).get("workflow_runs", [])
+          runs = [run for run in runs if run.get("head_sha") == os.environ["PROMOTED_SHA"]]
+          if not runs:
+              print("||")
+          else:
+              run = runs[0]
+              print("|".join([
+                  run.get("status") or "",
+                  run.get("conclusion") or "",
+                  run.get("html_url") or "",
+              ]))
+          PY
+            )"
+            IFS='|' read -r status conclusion url <<< "$result"
+
+            if [[ "$status" == "completed" && "$conclusion" == "success" ]]; then
+              echo "Common CI passed for $PROMOTED_SHA: $url"
+              exit 0
+            fi
+
+            if [[ "$status" == "completed" && -n "$conclusion" ]]; then
+              echo "Common CI finished with $conclusion for $PROMOTED_SHA: $url" >&2
+              exit 1
+            fi
+
+            echo "Waiting for TwinGraphOps CI to finish for $PROMOTED_SHA ($i/90)"
+            sleep 20
+          done
+
+          echo "Timed out waiting for TwinGraphOps CI to finish for $PROMOTED_SHA." >&2
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          runs = json.loads(Path("/tmp/twingraphops-ci-runs.json").read_text()).get("workflow_runs", [])
+          runs = [run for run in runs if run.get("head_sha") == os.environ["PROMOTED_SHA"]]
+          for run in runs:
+              print(f"{run.get('status')} {run.get('conclusion')} {run.get('html_url')}")
+          PY
+          exit 1
+
+  publish-promotable-images:
+    needs: source-ci-gate
+    runs-on: ubuntu-latest
+    outputs:
+      api_image: ${{ steps.manifest.outputs.api_image }}
+      frontend_image: ${{ steps.manifest.outputs.frontend_image }}
+      image_tag: ${{ steps.tags.outputs.image_tag }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PROMOTED_SHA }}
+
+      - name: Validate AWS publish settings
+        env:
+          AWS_ROLE_ARN: ${{ vars.PROD_AWS_ROLE_ARN }}
+        run: |
+          test -n "$AWS_REGION"
+          test -n "$AWS_ROLE_ARN"
+          test -n "$API_ECR_REPOSITORY"
+          test -n "$FRONTEND_ECR_REPOSITORY"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.PROD_AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Ensure ECR repositories exist
+        run: |
+          ensure_repo() {
+            local repo_name="$1"
+            if ! aws ecr describe-repositories --repository-names "$repo_name" >/dev/null 2>&1; then
+              aws ecr create-repository --repository-name "$repo_name" >/dev/null
+            fi
+          }
+
+          ensure_repo "$API_ECR_REPOSITORY"
+          ensure_repo "$FRONTEND_ECR_REPOSITORY"
+
+      - name: Resolve image tags
+        id: tags
+        run: |
+          echo "image_tag=sha-${PROMOTED_SHA}" >> "$GITHUB_OUTPUT"
+          echo "branch_tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve ECR registry
+        id: registry
+        run: |
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          echo "ecr_registry=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push API image
+        id: build_api
+        uses: docker/build-push-action@v6
+        with:
+          context: ./api
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.registry.outputs.ecr_registry }}/${{ env.API_ECR_REPOSITORY }}:${{ steps.tags.outputs.image_tag }}
+            ${{ steps.registry.outputs.ecr_registry }}/${{ env.API_ECR_REPOSITORY }}:${{ steps.tags.outputs.branch_tag }}
+
+      - name: Build and push frontend image
+        id: build_frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.registry.outputs.ecr_registry }}/${{ env.FRONTEND_ECR_REPOSITORY }}:${{ steps.tags.outputs.image_tag }}
+            ${{ steps.registry.outputs.ecr_registry }}/${{ env.FRONTEND_ECR_REPOSITORY }}:${{ steps.tags.outputs.branch_tag }}
+
+      - name: Write image manifest
+        id: manifest
+        run: |
+          API_IMAGE="${{ steps.registry.outputs.ecr_registry }}/${API_ECR_REPOSITORY}@${{ steps.build_api.outputs.digest }}"
+          FRONTEND_IMAGE="${{ steps.registry.outputs.ecr_registry }}/${FRONTEND_ECR_REPOSITORY}@${{ steps.build_frontend.outputs.digest }}"
+
+          cat > image-manifest.json <<EOF
+          {
+            "commit_sha": "${PROMOTED_SHA}",
+            "image_tag": "${{ steps.tags.outputs.image_tag }}",
+            "api_repository": "${{ steps.registry.outputs.ecr_registry }}/${API_ECR_REPOSITORY}",
+            "frontend_repository": "${{ steps.registry.outputs.ecr_registry }}/${FRONTEND_ECR_REPOSITORY}",
+            "api_image": "${API_IMAGE}",
+            "frontend_image": "${FRONTEND_IMAGE}"
+          }
+          EOF
+
+          echo "api_image=${API_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "frontend_image=${FRONTEND_IMAGE}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload image manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-manifest-${{ env.PROMOTED_SHA }}
+          path: image-manifest.json
+
+      - name: Trivy API image scan (fail on HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@7b7aa264d83dc58691451798b4d117d53d21edfe
+        with:
+          image-ref: ${{ steps.manifest.outputs.api_image }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Trivy frontend image scan (fail on HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@7b7aa264d83dc58691451798b4d117d53d21edfe
+        with:
+          image-ref: ${{ steps.manifest.outputs.frontend_image }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+  validate-staging-config:
+    needs: publish-promotable-images
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PROMOTED_SHA }}
+
+      - name: Prepare staging secret files
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AWS_ROLE_ARN: ${{ vars.STAGING_AWS_ROLE_ARN }}
+          AWS_SECRETS_MANAGER_SECRET_ID: ${{ vars.STAGING_AWS_SECRET_ID }}
+        run: |
+          test -n "$AWS_REGION"
+          test -n "$AWS_ROLE_ARN"
+          test -n "$AWS_SECRETS_MANAGER_SECRET_ID"
+
+      - name: Configure AWS credentials (staging)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.STAGING_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Prepare staging secret files from AWS Secrets Manager
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AWS_SECRETS_MANAGER_SECRET_ID: ${{ vars.STAGING_AWS_SECRET_ID }}
+        run: bash ./infra/scripts/bootstrap-secrets-from-aws.sh
+
+      - name: Validate compose config (staging)
+        env:
+          API_IMAGE: ${{ needs.publish-promotable-images.outputs.api_image }}
+          FRONTEND_IMAGE: ${{ needs.publish-promotable-images.outputs.frontend_image }}
+          TWIN_ENV: staging
+        run: docker compose config > /tmp/docker-compose.staging.rendered.yml
+
+      - name: Upload staging config artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-compose-staging
+          path: /tmp/docker-compose.staging.rendered.yml
+
+      - name: Cleanup staging secret files
+        if: always()
+        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt
+
+  verify-promotable-images:
+    needs: publish-promotable-images
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PROMOTED_SHA }}
+
+      - name: Validate AWS pull settings
+        env:
+          AWS_ROLE_ARN: ${{ vars.PROD_AWS_ROLE_ARN }}
+        run: |
+          test -n "$AWS_REGION"
+          test -n "$AWS_ROLE_ARN"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.PROD_AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Create CI secret files for smoke test
+        run: |
+          mkdir -p infra/secrets
+          printf '%s' 'neo4j/ci-password' > infra/secrets/neo4j_auth.txt
+          printf '%s' 'neo4j' > infra/secrets/neo4j_user.txt
+          printf '%s' 'ci-password' > infra/secrets/neo4j_password.txt
+          printf '%s' 'ci-gemini-placeholder' > infra/secrets/gemini_api_key.txt
+          printf '%s' 'ci-grafana-admin' > infra/secrets/grafana_admin_user.txt
+          printf '%s' 'ci-grafana-password' > infra/secrets/grafana_admin_password.txt
+
+      - name: Pull published images
+        env:
+          API_IMAGE: ${{ needs.publish-promotable-images.outputs.api_image }}
+          FRONTEND_IMAGE: ${{ needs.publish-promotable-images.outputs.frontend_image }}
+          TWIN_ENV: ci
+        run: docker compose pull api frontend
+
+      - name: Compose up exact published images
+        env:
+          API_IMAGE: ${{ needs.publish-promotable-images.outputs.api_image }}
+          FRONTEND_IMAGE: ${{ needs.publish-promotable-images.outputs.frontend_image }}
+          TWIN_ENV: ci
+        run: docker compose up -d
+
+      - name: Verify exact image smoke checks
+        run: |
+          check_url() {
+            local url="$1"
+            if ! curl -fsS "$url" > /dev/null; then
+              echo "Check failed: $url"
+              return 1
+            fi
+          }
+
+          for i in {1..45}; do
+            echo "Published image smoke attempt $i/45"
+            if check_url http://localhost:8000/health \
+              && check_url http://localhost:8000/ready \
+              && check_url http://localhost:8000/metrics \
+              && check_url http://localhost:3000/healthz; then
+              echo "Published image smoke checks passed"
+              exit 0
+            fi
+            if [ "$i" -eq 15 ] || [ "$i" -eq 30 ]; then
+              docker compose ps
+            fi
+            sleep 2
+          done
+          echo "Published image smoke checks failed"
+          docker compose ps
+          docker compose logs --tail=100
+          exit 1
+
+      - name: Verify published image Grafana health
+        run: |
+          check_url() {
+            local url="$1"
+            if ! curl -fsS "$url" > /dev/null; then
+              echo "Check failed: $url"
+              return 1
+            fi
+          }
+
+          for i in {1..60}; do
+            echo "Published image Grafana attempt $i/60"
+            if check_url http://localhost:3001/api/health; then
+              echo "Published image Grafana health check passed"
+              exit 0
+            fi
+            if [ "$i" -eq 20 ] || [ "$i" -eq 40 ]; then
+              docker compose ps
+              docker compose logs --tail=50 grafana
+            fi
+            sleep 3
+          done
+
+          echo "Published image Grafana health check failed"
+          docker compose ps
+          docker compose logs --tail=100 grafana
+          exit 1
+
+      - name: Show compose logs on failure
+        if: failure()
+        run: docker compose logs --tail=200
+
+      - name: Cleanup compose stack and CI secret files
+        if: always()
+        run: |
+          docker compose down -v
+          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt
+
+  deploy-staging:
+    needs: [publish-promotable-images, validate-staging-config, verify-promotable-images]
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PROMOTED_SHA }}
+
+      - name: Prepare staging secret files
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AWS_ROLE_ARN: ${{ vars.STAGING_AWS_ROLE_ARN }}
+          AWS_SECRETS_MANAGER_SECRET_ID: ${{ vars.STAGING_AWS_SECRET_ID }}
+        run: |
+          test -n "$AWS_REGION"
+          test -n "$AWS_ROLE_ARN"
+          test -n "$AWS_SECRETS_MANAGER_SECRET_ID"
+
+      - name: Configure AWS credentials (staging)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.STAGING_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Prepare staging secret files from AWS Secrets Manager
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AWS_SECRETS_MANAGER_SECRET_ID: ${{ vars.STAGING_AWS_SECRET_ID }}
+        run: bash ./infra/scripts/bootstrap-secrets-from-aws.sh
+
+      - name: Pull exact staging images
+        env:
+          API_IMAGE: ${{ needs.publish-promotable-images.outputs.api_image }}
+          FRONTEND_IMAGE: ${{ needs.publish-promotable-images.outputs.frontend_image }}
+          TWIN_ENV: staging
+        run: docker compose pull api frontend
+
+      - name: Simulate staging deployment
+        env:
+          API_IMAGE: ${{ needs.publish-promotable-images.outputs.api_image }}
+          FRONTEND_IMAGE: ${{ needs.publish-promotable-images.outputs.frontend_image }}
+          TWIN_ENV: staging
+        run: docker compose up -d
+
+      - name: Verify staging deployment
+        run: |
+          check_url() {
+            local url="$1"
+            if ! curl -fsS "$url" > /dev/null; then
+              echo "Check failed: $url"
+              return 1
+            fi
+          }
+
+          for i in {1..45}; do
+            echo "Staging attempt $i/45"
+            if check_url http://localhost:8000/health \
+              && check_url http://localhost:8000/ready \
+              && check_url http://localhost:8000/metrics \
+              && check_url http://localhost:3000/healthz; then
+              echo "Staging promotion checks passed"
+              exit 0
+            fi
+            if [ "$i" -eq 15 ] || [ "$i" -eq 30 ]; then
+              docker compose ps
+            fi
+            sleep 2
+          done
+          echo "Staging promotion checks failed"
+          docker compose ps
+          docker compose logs --tail=100
+          exit 1
+
+      - name: Verify staging Grafana health
+        run: |
+          check_url() {
+            local url="$1"
+            if ! curl -fsS "$url" > /dev/null; then
+              echo "Check failed: $url"
+              return 1
+            fi
+          }
+
+          for i in {1..60}; do
+            echo "Staging Grafana attempt $i/60"
+            if check_url http://localhost:3001/api/health; then
+              echo "Staging Grafana health check passed"
+              exit 0
+            fi
+            if [ "$i" -eq 20 ] || [ "$i" -eq 40 ]; then
+              docker compose ps
+              docker compose logs --tail=50 grafana
+            fi
+            sleep 3
+          done
+
+          echo "Staging Grafana health check failed"
+          docker compose ps
+          docker compose logs --tail=100 grafana
+          exit 1
+
+      - name: Record staging deployment evidence
+        run: |
+          docker compose ps
+          curl -fsS http://localhost:8000/metrics
+          curl -fsS http://localhost:3001/api/health
+
+      - name: Show staging logs on failure
+        if: failure()
+        run: docker compose logs --tail=200
+
+      - name: Cleanup staging deployment simulation
+        if: always()
+        run: |
+          docker compose down -v
+          rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt

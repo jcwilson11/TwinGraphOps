@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from gemini_client import GeminiExtractionError, GeminiGraphExtractor
+from gemini_client import GeminiDocumentGraphExtractor, GeminiExtractionError, GeminiGraphExtractor
 
 
 class FakeResponse:
@@ -17,7 +17,7 @@ class FakeResponse:
 
 class GeminiClientTests(unittest.TestCase):
     def test_extract_chunk_returns_valid_graph(self):
-        extractor = GeminiGraphExtractor(api_key="test-key", max_retries=1)
+        extractor = GeminiGraphExtractor(api_key="test-key", max_retries=1, backoff_seconds=0)
         payload = {
             "nodes": [
                 {"id": "C1", "name": "API", "type": "software", "description": "Backend"},
@@ -66,3 +66,45 @@ class GeminiClientTests(unittest.TestCase):
                 extractor.extract_chunk("chunk", "prompt", 4)
         self.assertEqual(context.exception.code, "gemini_request_timeout")
         self.assertEqual(context.exception.chunk_index, 4)
+
+    def test_document_extract_chunk_retries_gemini_unavailable(self):
+        extractor = GeminiDocumentGraphExtractor(api_key="test-key", max_retries=1, backoff_seconds=0)
+        payload = {
+            "source": {"document_name": "manual.pdf", "chunk_file": "chunks/source_document_part_001.md", "chunk_id": "source_document_part_001"},
+            "nodes": [
+                {
+                    "id": "source_document_part_001:N1",
+                    "label": "Policy",
+                    "kind": "section",
+                    "canonical_name": "Policy",
+                    "aliases": [],
+                    "summary": "",
+                    "evidence": [{"quote": "Policy text", "page_start": 1, "page_end": 1}],
+                }
+            ],
+            "edges": [],
+        }
+        with patch.object(
+            extractor,
+            "_generate_payload",
+            side_effect=[
+                RuntimeError("503 UNAVAILABLE. This model is currently experiencing high demand."),
+                FakeResponse(text=json.dumps(payload)),
+            ],
+        ):
+            graph, _ = extractor.extract_chunk("chunk", "prompt", 5)
+
+        self.assertEqual(extractor.last_attempts, 2)
+        self.assertEqual(graph.nodes[0].canonical_name, "Policy")
+
+    def test_extract_chunk_marks_gemini_unavailable_after_retries(self):
+        extractor = GeminiGraphExtractor(api_key="test-key", max_retries=0)
+        with patch.object(
+            extractor,
+            "_generate_payload",
+            side_effect=RuntimeError("503 UNAVAILABLE. This model is currently experiencing high demand."),
+        ):
+            with self.assertRaises(GeminiExtractionError) as context:
+                extractor.extract_chunk("chunk", "prompt", 6)
+
+        self.assertEqual(context.exception.code, "gemini_request_unavailable")

@@ -94,6 +94,7 @@ PY
   printf 'API_IMAGE=%s\n' "$API_IMAGE"
   printf 'FRONTEND_IMAGE=%s\n' "$FRONTEND_IMAGE"
   printf 'PUBLIC_API_BASE_URL=%s\n' "$PUBLIC_API_BASE_URL"
+  printf 'TWIN_RELEASE_SHA=%s\n' "${RELEASE_SHA:-unknown}"
   if [[ -n "$GEMINI_MODEL" ]]; then
     printf 'GEMINI_MODEL=%s\n' "$GEMINI_MODEL"
   fi
@@ -102,6 +103,33 @@ PY
 } > "$ENV_FILE"
 
 rm -f "$TMP_EXPORTS"
+
+TWIN_DEPLOY_ENV_FILE="$ENV_FILE" python3 - <<'PY'
+import hashlib
+import os
+from pathlib import Path
+
+env_file = Path(os.environ["TWIN_DEPLOY_ENV_FILE"])
+values: dict[str, str] = {}
+for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+    if not raw_line or raw_line.startswith("#") or "=" not in raw_line:
+        continue
+    key, value = raw_line.split("=", 1)
+    values[key] = value
+
+api_key = values.get("GEMINI_API_KEY", "")
+if not api_key:
+    raise SystemExit("Generated cloud env is missing GEMINI_API_KEY.")
+if api_key in {"replace-me", "replace-with-real-api-key"}:
+    raise SystemExit("Generated cloud env still contains a placeholder GEMINI_API_KEY.")
+
+fingerprint = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:12]
+model = values.get("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
+print(
+    "Deployment Gemini config: "
+    f"key_present=true key_length={len(api_key)} key_sha256_prefix={fingerprint} model={model}"
+)
+PY
 
 login_to_ecr_if_needed() {
   local image="$1"

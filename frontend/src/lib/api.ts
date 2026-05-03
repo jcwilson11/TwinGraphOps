@@ -2,6 +2,9 @@ import { appConfig } from './config';
 import type {
   ApiGraphData,
   ApiPayload,
+  ApiDocumentGraphData,
+  DocumentArtifactManifest,
+  DocumentIngestResponse,
   ImpactResponse,
   IngestResponse,
   ProcessingStatus,
@@ -132,8 +135,51 @@ export async function uploadDocument(
   );
 }
 
+export async function uploadKnowledgeDocument(
+  file: File,
+  replaceExisting = true,
+  timeoutMs = appConfig.processingTimeoutMs,
+  ingestionId?: string
+) {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('replace_existing', String(replaceExisting));
+  if (ingestionId) {
+    formData.append('ingestion_id', ingestionId);
+  }
+
+  return request<DocumentIngestResponse>(
+    '/document/ingest',
+    {
+      method: 'POST',
+      body: formData,
+    },
+    timeoutMs
+  );
+}
+
 export async function getGraph() {
   return request<ApiGraphData>('/graph');
+}
+
+export async function getDocumentGraph() {
+  return request<ApiDocumentGraphData>('/document/graph');
+}
+
+export async function getActiveDocumentArtifacts() {
+  return request<DocumentArtifactManifest>('/document/artifacts');
+}
+
+export async function getDocumentArtifacts(ingestionId: string) {
+  return request<DocumentArtifactManifest>(`/document/artifacts/${encodeURIComponent(ingestionId)}`);
+}
+
+export function getDocumentArtifactDownloadUrl(ingestionId: string, artifactId: string) {
+  return `/api/document/artifacts/${encodeURIComponent(ingestionId)}/files/${encodeURIComponent(artifactId)}`;
+}
+
+export function getDocumentArtifactBundleDownloadUrl(ingestionId: string) {
+  return `/api/document/artifacts/${encodeURIComponent(ingestionId)}/bundle`;
 }
 
 export async function getRisk(componentId: string) {
@@ -153,6 +199,10 @@ export async function seedDemoGraph() {
 
 export async function getProcessingStatus(ingestionId: string) {
   return request<ProcessingStatus>(`/ingest/${encodeURIComponent(ingestionId)}/events`);
+}
+
+export async function getDocumentProcessingStatus(ingestionId: string) {
+  return request<ProcessingStatus>(`/document/ingest/${encodeURIComponent(ingestionId)}/events`);
 }
 
 export async function getRiskRankedItems(): Promise<never> {

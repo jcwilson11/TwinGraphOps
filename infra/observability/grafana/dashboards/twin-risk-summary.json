@@ -40,7 +40,7 @@
           "refId": "A"
         }
       ],
-      "title": "Active Nodes",
+      "title": "Legacy Active Nodes",
       "type": "stat"
     },
     {
@@ -78,7 +78,7 @@
           "refId": "A"
         }
       ],
-      "title": "Active Edges",
+      "title": "Legacy Active Edges",
       "type": "stat"
     },
     {
@@ -116,7 +116,7 @@
           "refId": "A"
         }
       ],
-      "title": "High Risk Nodes",
+      "title": "Legacy High Risk Nodes",
       "type": "stat"
     },
     {
@@ -154,7 +154,7 @@
           "refId": "A"
         }
       ],
-      "title": "Average Risk Score",
+      "title": "Legacy Average Risk Score",
       "type": "stat"
     },
     {
@@ -176,7 +176,7 @@
           "refId": "A"
         }
       ],
-      "title": "Risk Bucket Counts",
+      "title": "Legacy Risk Bucket Counts",
       "type": "timeseries"
     },
     {
@@ -203,7 +203,7 @@
           "refId": "B"
         }
       ],
-      "title": "Average Risk Trend",
+      "title": "Legacy Average Risk Trend",
       "type": "timeseries"
     },
     {
@@ -225,7 +225,7 @@
           "refId": "A"
         }
       ],
-      "title": "Twin Summary Gauges",
+      "title": "Legacy Component Summary Gauges",
       "type": "timeseries"
     }
   ],
@@ -233,7 +233,8 @@
   "style": "dark",
   "tags": [
     "twingraphops",
-    "risk"
+    "risk",
+    "legacy-component-graph"
   ],
   "templating": {
     "list": []
@@ -242,7 +243,7 @@
     "from": "now-24h",
     "to": "now"
   },
-  "title": "TwinGraphOps Risk Summary",
+  "title": "TwinGraphOps Legacy Component Risk Summary",
   "uid": "tgo-risk-summary",
-  "version": 1
+  "version": 2
 }

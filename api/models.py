@@ -50,6 +50,75 @@ class MergedGraph(BaseModel):
     edges: list[GraphEdge] = Field(default_factory=list)
 
 
+class DocumentEvidence(BaseModel):
+    quote: str
+    page_start: int | None = None
+    page_end: int | None = None
+
+
+class DocumentSource(BaseModel):
+    document_name: str = ""
+    chunk_file: str = ""
+    chunk_id: str = ""
+    pdf_page_start: int | None = None
+    pdf_page_end: int | None = None
+
+
+class DocumentChunkNode(BaseModel):
+    id: str
+    label: str
+    kind: str = "other"
+    canonical_name: str
+    aliases: list[str] = Field(default_factory=list)
+    summary: str = ""
+    evidence: list[DocumentEvidence] = Field(default_factory=list)
+
+
+class DocumentChunkEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+    type: str = "related_to"
+    summary: str = ""
+    evidence: list[DocumentEvidence] = Field(default_factory=list)
+
+
+class DocumentChunkGraph(BaseModel):
+    source: DocumentSource = Field(default_factory=DocumentSource)
+    nodes: list[DocumentChunkNode] = Field(default_factory=list)
+    edges: list[DocumentChunkEdge] = Field(default_factory=list)
+
+
+class DocumentGraphNode(BaseModel):
+    id: str
+    label: str
+    kind: str = "other"
+    canonical_name: str
+    aliases: list[str] = Field(default_factory=list)
+    summary: str = ""
+    evidence: list[DocumentEvidence] = Field(default_factory=list)
+    sources: list[DocumentSource] = Field(default_factory=list)
+    degree: float = 0.0
+    source: str = "document"
+
+
+class DocumentGraphEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+    type: str = "related_to"
+    summary: str = ""
+    evidence: list[DocumentEvidence] = Field(default_factory=list)
+    source_chunk: DocumentSource | None = None
+
+
+class DocumentMergedGraph(BaseModel):
+    source: str = "document"
+    ingestion_id: str | None = None
+    nodes: list[DocumentGraphNode] = Field(default_factory=list)
+    edges: list[DocumentGraphEdge] = Field(default_factory=list)
+
+
 def model_dump_compat(instance: BaseModel) -> dict[str, Any]:
     if hasattr(instance, "model_dump"):
         return instance.model_dump()
