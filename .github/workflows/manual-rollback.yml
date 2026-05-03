@@ -134,6 +134,10 @@ jobs:
           RELEASE_SHA: ${{ needs.resolve-rollback-release.outputs.rollback_release_sha }}
           REQUESTED_RELEASE_TAG: ${{ needs.resolve-rollback-release.outputs.rollback_release_tag }}
         run: |
+          bash ./infra/scripts/ensure-ssm-instance-online.sh \
+            --instance-id "$PROD_EC2_INSTANCE_ID" \
+            --github-output "$GITHUB_OUTPUT"
+
           cat > /tmp/twingraphops-manual-rollback.sh <<EOF
           sudo bash -lc '
           set -euo pipefail
@@ -172,6 +176,7 @@ jobs:
             --document-name AWS-RunShellScript \
             --instance-ids "$PROD_EC2_INSTANCE_ID" \
             --comment "Manual rollback TwinGraphOps to ${REQUESTED_RELEASE_TAG}" \
+            --timeout-seconds 600 \
             --parameters file:///tmp/ssm-manual-rollback-commands.json \
             --query 'Command.CommandId' \
             --output text)"

@@ -71,7 +71,7 @@ The GitHub OIDC role should be able to:
 
 - push images to ECR
 - create the ECR repositories if they do not exist yet
-- call `ssm:SendCommand`, `ssm:GetCommandInvocation`, and related read APIs for the production instance
+- call `ssm:SendCommand`, `ssm:GetCommandInvocation`, `ssm:DescribeInstanceInformation`, and related read APIs for the production instance
 
 The `dev` branch staging simulation pulls the exact digest refs published by the `TwinGraphOps Promote Dev` workflow after CI passes from the shared production ECR repositories using the staging GitHub Actions role. That staging role therefore needs ECR pull permissions in addition to Secrets Manager read access.
 
@@ -128,3 +128,14 @@ AWS console checks for the DevSecOps evidence package:
 - Secrets Manager contains real production values for `neo4j_user`, `neo4j_password`, `gemini_api_key`, `grafana_admin_user`, and `grafana_admin_password`.
 - Systems Manager Parameter Store contains `/twingraphops/production/gemini_model` in the deployment region.
 - Prometheus targets are up and the Grafana dashboards have non-empty platform, document KG ingestion, legacy risk, and DevSecOps evidence panels after a smoke upload.
+
+If a release or rollback command remains `Pending`, verify the target host is online in Systems Manager before retrying:
+
+```bash
+aws ssm describe-instance-information \
+  --filters "Key=InstanceIds,Values=$PROD_EC2_INSTANCE_ID" \
+  --query 'InstanceInformationList[0].{PingStatus:PingStatus,AgentVersion:AgentVersion,PlatformName:PlatformName}' \
+  --output table
+```
+
+`PingStatus` must be `Online`. If it is missing, `ConnectionLost`, or `Inactive`, confirm the workflow is using the instance ID from the same AWS region as `AWS_REGION`, the instance profile still includes `AmazonSSMManagedInstanceCore`, the subnet has outbound access to SSM endpoints, and `amazon-ssm-agent` is installed and running on the host.

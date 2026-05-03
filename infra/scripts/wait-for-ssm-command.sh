@@ -125,7 +125,12 @@ PY
 }
 
 rollback_required_for_terminal_failure() {
-  if [[ "$LAST_STATUS" == "TimedOut" && "$LAST_STATUS_DETAILS" == *"Delivery Timed Out"* ]]; then
+  if [[ "$LAST_STATUS_DETAILS" == *"Delivery Timed Out"* ]]; then
+    echo false
+    return
+  fi
+
+  if [[ "$LAST_RESPONSE_CODE" == "-1" ]]; then
     echo false
     return
   fi

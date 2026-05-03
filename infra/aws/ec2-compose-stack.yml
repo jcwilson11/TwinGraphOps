@@ -107,7 +107,8 @@ Resources:
           #!/bin/bash
           set -euxo pipefail
           dnf update -y
-          dnf install -y docker git
+          dnf install -y amazon-ssm-agent docker git
+          systemctl enable --now amazon-ssm-agent
           systemctl enable --now docker
           usermod -aG docker ec2-user
           mkdir -p /usr/local/lib/docker/cli-plugins
