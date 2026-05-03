@@ -73,7 +73,7 @@ The GitHub OIDC role should be able to:
 - create the ECR repositories if they do not exist yet
 - call `ssm:SendCommand`, `ssm:GetCommandInvocation`, and related read APIs for the production instance
 
-The `dev` branch staging simulation pulls the exact digest refs published by CI from the shared production ECR repositories using the staging GitHub Actions role. That staging role therefore needs ECR pull permissions in addition to Secrets Manager read access.
+The `dev` branch staging simulation pulls the exact digest refs published by the `TwinGraphOps Promote Dev` workflow after CI passes from the shared production ECR repositories using the staging GitHub Actions role. That staging role therefore needs ECR pull permissions in addition to Secrets Manager read access.
 
 Minimum ECR permissions for the staging role:
 
@@ -91,7 +91,7 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-Production release is tag-only: the workflow is not manually runnable with an arbitrary branch, SHA, or other ref. The tag must point to a commit whose CI run already published promotable `sha-<commit>` images into ECR.
+Production release is tag-only: the workflow is not manually runnable with an arbitrary branch, SHA, or other ref. The tag must point to a commit whose CI-gated promotion workflow already published promotable `sha-<commit>` images into ECR.
 
 The `TwinGraphOps Release` workflow will then:
 

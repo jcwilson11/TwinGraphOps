@@ -1,0 +1,84 @@
+name: PR Promotion Config
+
+on:
+  pull_request:
+    branches: ["main", "dev"]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-promotion-config:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve promotion path
+        id: promotion
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$BASE_REF" == "dev" && "$HEAD_REF" == twin-* ]]; then
+            echo "should_validate=true" >> "$GITHUB_OUTPUT"
+            echo "twin_env=staging" >> "$GITHUB_OUTPUT"
+            echo "artifact_name=docker-compose-staging" >> "$GITHUB_OUTPUT"
+            echo "config_path=/tmp/docker-compose.staging.rendered.yml" >> "$GITHUB_OUTPUT"
+            echo "promotion_label=staging PR" >> "$GITHUB_OUTPUT"
+          elif [[ "$BASE_REF" == "main" && "$HEAD_REF" == "dev" ]]; then
+            echo "should_validate=true" >> "$GITHUB_OUTPUT"
+            echo "twin_env=production" >> "$GITHUB_OUTPUT"
+            echo "artifact_name=docker-compose-production" >> "$GITHUB_OUTPUT"
+            echo "config_path=/tmp/docker-compose.production.rendered.yml" >> "$GITHUB_OUTPUT"
+            echo "promotion_label=production PR" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_validate=false" >> "$GITHUB_OUTPUT"
+            echo "twin_env=none" >> "$GITHUB_OUTPUT"
+            echo "artifact_name=none" >> "$GITHUB_OUTPUT"
+            echo "config_path=none" >> "$GITHUB_OUTPUT"
+            echo "promotion_label=not a promotion path" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report non-promotion path
+        if: steps.promotion.outputs.should_validate == 'false'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          echo "PR ${HEAD_REF} -> ${BASE_REF} is not a promotion path; no compose config validation is required."
+
+      - name: Checkout repo
+        if: steps.promotion.outputs.should_validate == 'true'
+        uses: actions/checkout@v4
+
+      - name: Create placeholder secret files
+        if: steps.promotion.outputs.should_validate == 'true'
+        env:
+          TWIN_ENV: ${{ steps.promotion.outputs.twin_env }}
+        run: |
+          mkdir -p infra/secrets
+          printf '%s' "neo4j/${TWIN_ENV}-pr-password" > infra/secrets/neo4j_auth.txt
+          printf '%s' 'neo4j' > infra/secrets/neo4j_user.txt
+          printf '%s' "${TWIN_ENV}-pr-password" > infra/secrets/neo4j_password.txt
+          printf '%s' "${TWIN_ENV}-pr-gemini-placeholder" > infra/secrets/gemini_api_key.txt
+          printf '%s' "${TWIN_ENV}-pr-grafana-admin" > infra/secrets/grafana_admin_user.txt
+          printf '%s' "${TWIN_ENV}-pr-grafana-password" > infra/secrets/grafana_admin_password.txt
+
+      - name: Validate compose config
+        if: steps.promotion.outputs.should_validate == 'true'
+        env:
+          CONFIG_PATH: ${{ steps.promotion.outputs.config_path }}
+          TWIN_ENV: ${{ steps.promotion.outputs.twin_env }}
+        run: docker compose config > "$CONFIG_PATH"
+
+      - name: Upload compose config artifact
+        if: steps.promotion.outputs.should_validate == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.promotion.outputs.artifact_name }}
+          path: ${{ steps.promotion.outputs.config_path }}
+
+      - name: Cleanup placeholder secret files
+        if: always() && steps.promotion.outputs.should_validate == 'true'
+        run: rm -f infra/secrets/neo4j_auth.txt infra/secrets/neo4j_user.txt infra/secrets/neo4j_password.txt infra/secrets/gemini_api_key.txt infra/secrets/grafana_admin_user.txt infra/secrets/grafana_admin_password.txt
