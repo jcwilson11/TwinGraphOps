@@ -48,8 +48,35 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: Ingestion failures detected
-          description: The ingestion pipeline has reported failures during the last 10 minutes.
+          summary: Legacy component ingestion failures detected
+          description: The legacy component ingestion pipeline has reported failures during the last 10 minutes.
+
+      - alert: TwinGraphOpsDocumentIngestFailures
+        expr: sum(rate(twingraphops_document_ingest_failures_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Document knowledge graph ingestion failures detected
+          description: The async document knowledge graph pipeline has reported failures during the last 10 minutes.
+
+      - alert: TwinGraphOpsDocumentPageMarkerFailures
+        expr: sum(rate(twingraphops_document_page_marker_failures_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: PDF page marker validation failures detected
+          description: PDF conversion or page-aware chunk validation is failing for document knowledge graph ingestion.
+
+      - alert: TwinGraphOpsGeminiTimeouts
+        expr: sum(rate(twingraphops_gemini_timeouts_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Gemini extraction timeouts detected
+          description: Gemini extraction requests are timing out during graph creation.
 
       - alert: TwinGraphOpsHighLatencyP95
         expr: |

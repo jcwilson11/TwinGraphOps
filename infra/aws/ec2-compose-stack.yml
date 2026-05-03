@@ -17,7 +17,6 @@ Parameters:
     Default: t3.micro
     AllowedValues:
       - t3.micro
-      - t2.micro
   RootVolumeSize:
     Type: Number
     Default: 30

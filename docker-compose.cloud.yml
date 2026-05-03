@@ -38,6 +38,9 @@ services:
       GEMINI_RETRY_BACKOFF_SECONDS: ${GEMINI_RETRY_BACKOFF_SECONDS:-1.0}
       ARTIFACTS_DIR: /app/runtime/artifacts
       TWIN_ENV: ${TWIN_ENV:-cloud}
+      TWIN_RELEASE_SHA: ${TWIN_RELEASE_SHA:-unknown}
+      TWIN_API_IMAGE: ${API_IMAGE:-twin_api:latest}
+      TWIN_FRONTEND_IMAGE: ${FRONTEND_IMAGE:-twin_frontend:latest}
     expose:
       - "8000"
     volumes:
@@ -59,6 +62,7 @@ services:
     environment:
       PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-http://api:8000}
       TWIN_ENV: ${TWIN_ENV:-cloud}
+      TWIN_RELEASE_SHA: ${TWIN_RELEASE_SHA:-unknown}
     expose:
       - "3000"
     command: node server.js
