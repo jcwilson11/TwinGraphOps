@@ -107,6 +107,9 @@ jobs:
     environment: production
 
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
       - name: Validate AWS rollback settings
         env:
           AWS_ROLE_ARN: ${{ vars.PROD_AWS_ROLE_ARN }}
@@ -124,6 +127,7 @@ jobs:
 
       - name: Send manual rollback command over AWS Systems Manager
         id: rollback_ssm
+        timeout-minutes: 45
         env:
           API_IMAGE: ${{ needs.resolve-rollback-release.outputs.rollback_api_image }}
           FRONTEND_IMAGE: ${{ needs.resolve-rollback-release.outputs.rollback_frontend_image }}
@@ -173,7 +177,10 @@ jobs:
             --output text)"
 
           echo "command_id=$COMMAND_ID" >> "$GITHUB_OUTPUT"
-          aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "$PROD_EC2_INSTANCE_ID"
+          bash ./infra/scripts/wait-for-ssm-command.sh \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$PROD_EC2_INSTANCE_ID" \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Show manual rollback logs
         if: always() && steps.rollback_ssm.outputs.command_id != ''
@@ -182,7 +189,7 @@ jobs:
             --command-id "${{ steps.rollback_ssm.outputs.command_id }}" \
             --instance-id "$PROD_EC2_INSTANCE_ID" \
             --query '{Status:Status,StandardOutputContent:StandardOutputContent,StandardErrorContent:StandardErrorContent}' \
-            --output json
+            --output json || true
 
       - name: Record manual rollback summary
         if: always()
