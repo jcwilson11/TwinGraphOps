@@ -15,6 +15,9 @@ TWIN_ENV="${TWIN_ENV:-production}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-twingraphops}"
 GEMINI_MODEL="${GEMINI_MODEL:-}"
 GEMINI_MODEL_PARAMETER_NAME="${GEMINI_MODEL_PARAMETER_NAME:-/${COMPOSE_PROJECT_NAME}/${TWIN_ENV}/gemini_model}"
+COMPOSE_WAIT_TIMEOUT_SECONDS="${COMPOSE_WAIT_TIMEOUT_SECONDS:-300}"
+DEPLOY_HEALTH_ATTEMPTS="${DEPLOY_HEALTH_ATTEMPTS:-60}"
+DEPLOY_HEALTH_SLEEP_SECONDS="${DEPLOY_HEALTH_SLEEP_SECONDS:-5}"
 
 if [[ -z "$AWS_SECRET_ID" ]]; then
   echo "Provide AWS_SECRETS_MANAGER_SECRET_ID or pass the secret id as the first argument." >&2
@@ -152,32 +155,54 @@ fi
 docker pull "$API_IMAGE"
 docker pull "$FRONTEND_IMAGE"
 
-docker compose \
-  --env-file "$ENV_FILE" \
-  -f "$COMPOSE_FILE" \
-  up -d --remove-orphans
+COMPOSE_ARGS=(--env-file "$ENV_FILE" -f "$COMPOSE_FILE")
+
+docker compose "${COMPOSE_ARGS[@]}" up -d --remove-orphans --wait --wait-timeout "$COMPOSE_WAIT_TIMEOUT_SECONDS"
+
+# Nginx is long-lived while app containers are recreated; restart it after app health is stable
+# so upstream container names resolve to the fresh container IPs.
+docker compose "${COMPOSE_ARGS[@]}" restart nginx
 
 check_url() {
   local url="$1"
-  if ! curl -fsS "$url" >/dev/null; then
-    echo "Check failed: $url" >&2
+  local status=""
+
+  status="$(curl -sS -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || true)"
+  if [[ "$status" != "200" ]]; then
+    echo "Check failed: $url returned ${status:-no-response}" >&2
     return 1
   fi
 }
 
-for i in {1..30}; do
-  echo "Deployment health check attempt $i/30"
-  if check_url http://127.0.0.1/healthz \
-    && check_url http://127.0.0.1/api/health \
-    && check_url http://127.0.0.1/api/ready \
-    && check_url http://127.0.0.1/api/metrics \
-    && check_url http://127.0.0.1/grafana/api/health; then
+HEALTH_URLS=(
+  http://127.0.0.1/healthz
+  http://127.0.0.1/api/health
+  http://127.0.0.1/api/ready
+  http://127.0.0.1/api/metrics
+  http://127.0.0.1/grafana/api/health
+)
+
+for i in $(seq 1 "$DEPLOY_HEALTH_ATTEMPTS"); do
+  echo "Deployment health check attempt $i/$DEPLOY_HEALTH_ATTEMPTS"
+  all_passed=true
+  for url in "${HEALTH_URLS[@]}"; do
+    if ! check_url "$url"; then
+      all_passed=false
+    fi
+  done
+
+  if [[ "$all_passed" == "true" ]]; then
     echo "Deployment checks passed."
     exit 0
   fi
-  sleep 5
+
+  if [[ "$i" -eq 1 || "$((i % 12))" -eq 0 ]]; then
+    docker compose "${COMPOSE_ARGS[@]}" ps
+  fi
+
+  sleep "$DEPLOY_HEALTH_SLEEP_SECONDS"
 done
 
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --tail=200
+docker compose "${COMPOSE_ARGS[@]}" ps
+docker compose "${COMPOSE_ARGS[@]}" logs --tail=200
 exit 1
